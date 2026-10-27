@@ -1,0 +1,4 @@
+*.exe
+*.pdb
+.ai-tmp/
+Thumbs.db
