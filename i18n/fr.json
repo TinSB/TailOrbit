@@ -296,5 +296,17 @@
   "这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。": "Cette image fait {0:0.#} Mo (limite : {1} Mo). Utilisez « Envoyer des fichiers ».",
   "找不到这台设备": "Appareil introuvable",
   "{0} 不在线": "{0} est hors ligne",
-  "找不到 {0}": "{0} introuvable"
+  "找不到 {0}": "{0} introuvable",
+  "安装": "Installer",
+  "更新": "Mettre à jour",
+  "重新安装": "Réinstaller",
+  "正在安装…": "Installation…",
+  "没装上：{0}": "Échec de l'installation : {0}",
+  "卸载 TailOrbit？": "Désinstaller TailOrbit ?",
+  "同时删除设置和传输记录": "Supprimer aussi les réglages et l'historique des transferts",
+  "卸载": "Désinstaller",
+  "正在卸载…": "Désinstallation…",
+  "已卸载": "Désinstallé",
+  "没卸干净：{0}": "Désinstallation incomplète : {0}",
+  "取消": "Annuler"
 }

@@ -71,7 +71,19 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 需要 Windows 10（1903 或更新）或 Windows 11，并且装好、登录了 Tailscale。用的是系统自带的 .NET Framework 4.8，不用另装运行库。
 
-仓库里没有现成的 exe，拿 Windows 自带的编译器编一下就行，不用装 Visual Studio：
+到 [Releases](https://github.com/TinSB/TailOrbit/releases) 下载最新的 `TailOrbit-Setup-版本号.exe`，双击，点「安装」。不用管理员权限，程序装在 `%LOCALAPPDATA%\Programs\TailOrbit`，开始菜单里会有它，开机自启默认打开。
+
+安装程序没有数字签名，第一次运行时 Windows 可能提示「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」就行。
+
+出了新版，下载新的安装程序再运行一次：开着的 TailOrbit 会自己退出、换成新版，设置和收发记录都还在。
+
+### 卸载
+
+在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享和剪贴板互通会一起撤掉；设置和收发记录默认留着，打开「同时删除设置和传输记录」就一起删。
+
+### 自己编译
+
+不用安装程序也行，拿 Windows 自带的编译器编一下，不用装 Visual Studio：
 
 ```powershell
 git clone https://github.com/TinSB/TailOrbit.git
@@ -81,6 +93,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 用 `TailOrbit.exe --tray` 启动就只待在托盘里，开机自启就是这么启动的。程序同时只会开一个，再运行一次只会把已经开着的窗口叫到前面。
+
+`.\release.ps1` 打出 `dist\TailOrbit-Setup-版本号.exe`。安装程序加 `--quiet` 就不弹窗口直接装好；`TailOrbit.exe --uninstall --quiet` 不弹窗口卸载，再加 `--purge` 连设置和记录一起删。
 
 ### 隐私
 
@@ -168,7 +182,19 @@ The clipboard only travels between your own devices: only devices signed in to y
 
 You need Windows 10 (1903 or later) or Windows 11, with Tailscale installed and signed in. It runs on the .NET Framework 4.8 that comes with Windows, so there's nothing else to install.
 
-There's no prebuilt exe. Build it with the compiler that ships with Windows; no Visual Studio needed:
+Download the latest `TailOrbit-Setup-<version>.exe` from [Releases](https://github.com/TinSB/TailOrbit/releases), double-click it and click **Install**. No admin rights needed: it goes into `%LOCALAPPDATA%\Programs\TailOrbit`, shows up in the Start menu, and starts with Windows unless you turn that off.
+
+The installer isn't code-signed, so the first time you run it Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+
+To update, download the new installer and run it again. The running TailOrbit closes itself and is replaced; your settings and history stay.
+
+### Uninstall
+
+In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares and shared clipboard it set up in Tailscale are taken down too. Your settings and transfer history are kept unless you turn on **Also delete settings and transfer history**.
+
+### Build it yourself
+
+You can skip the installer and build it with the compiler that ships with Windows; no Visual Studio needed:
 
 ```powershell
 git clone https://github.com/TinSB/TailOrbit.git
@@ -178,6 +204,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 Run `TailOrbit.exe --tray` to start in the tray only; that's how **Start with Windows** launches it. Only one copy runs at a time, and launching it again just brings the open window to the front.
+
+`.\release.ps1` builds `dist\TailOrbit-Setup-<version>.exe`. Add `--quiet` to the installer to install without any window; `TailOrbit.exe --uninstall --quiet` removes it the same way, and `--purge` also deletes settings and history.
 
 ### Privacy
 

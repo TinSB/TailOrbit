@@ -2,3 +2,4 @@
 *.pdb
 .ai-tmp/
 Thumbs.db
+dist/

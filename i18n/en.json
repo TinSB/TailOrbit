@@ -296,5 +296,17 @@
   "这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。": "This one is {0:0.#} MB (the limit is {1} MB). Use Send files instead.",
   "找不到这台设备": "Can't find this device",
   "{0} 不在线": "{0} is offline",
-  "找不到 {0}": "Can't find {0}"
+  "找不到 {0}": "Can't find {0}",
+  "安装": "Install",
+  "更新": "Update",
+  "重新安装": "Reinstall",
+  "正在安装…": "Installing…",
+  "没装上：{0}": "Couldn't install: {0}",
+  "卸载 TailOrbit？": "Uninstall TailOrbit?",
+  "同时删除设置和传输记录": "Also delete settings and transfer history",
+  "卸载": "Uninstall",
+  "正在卸载…": "Uninstalling…",
+  "已卸载": "Uninstalled",
+  "没卸干净：{0}": "Couldn't finish uninstalling: {0}",
+  "取消": "Cancel"
 }

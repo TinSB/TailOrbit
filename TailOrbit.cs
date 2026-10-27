@@ -7,6 +7,7 @@
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
 // 托盘菜单（TrayMenu.cs）：右键托盘图标，打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
 // 环礁接口（Island.cs）：给屏幕顶上的通知岛用的本机接口——设备列表、发文件、收发进度和剪贴板动静；岛连着时不弹托盘通知。
+// 安装、卸载（Setup.cs）：发布的 TailOrbit-Setup-<版本>.exe 就是本程序改了名，双击装到 %LOCALAPPDATA%\Programs\TailOrbit；从“设置 → 应用”卸载。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
 using System;
@@ -38,7 +39,7 @@ using Drawing = System.Drawing;
 // 任务管理器等处显示的名字
 [assembly: System.Reflection.AssemblyTitle("TailOrbit")]
 [assembly: System.Reflection.AssemblyProduct("TailOrbit")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
 
 namespace TailOrbit
 {
@@ -51,6 +52,13 @@ namespace TailOrbit
         [STAThread]
         static void Main(string[] args)
         {
+            // 发布出去的 TailOrbit-Setup-*.exe、“设置 → 应用”里点卸载：走安装程序那一套（Setup.cs），不占“只开一个”的名额
+            string setup = Setup.Mode(args);
+            if (setup != null)
+            {
+                Environment.ExitCode = Setup.Run(setup, args);
+                return;
+            }
             bool first;
             using (new Mutex(true, @"Local\TailOrbit.Single", out first))
             {
@@ -700,9 +708,15 @@ namespace TailOrbit
     // 开机自启：写当前用户的 Run 注册表项，只在用户自己点开关时改
     static class Autostart
     {
-        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
-        static string Command { get { return "\"" + System.Reflection.Assembly.GetExecutingAssembly().Location + "\" --tray"; } }
+        static string Command { get { return For(System.Reflection.Assembly.GetExecutingAssembly().Location); } }
+
+        // 开机时怎么启动这一份：只待在托盘里
+        public static string For(string exe)
+        {
+            return "\"" + exe + "\" --tray";
+        }
 
         public static bool Enabled
         {
@@ -976,7 +990,7 @@ namespace TailOrbit
         HwndSource sink;
         WinForms.NotifyIcon tray;
         TrayMenu menu;
-        EventWaitHandle showSignal;
+        EventWaitHandle showSignal, quitSignal;
         bool sweeping;
         readonly List<SendJob> loose = new List<SendJob>();   // 环礁上发起、没在星网上画的发送：退出时取消
         public bool HotkeyOk { get; private set; }   // Ctrl+Alt+A 注册上了：托盘菜单里给它画键帽
@@ -1007,6 +1021,9 @@ namespace TailOrbit
             // 别处再启动一次本程序（开始菜单、双击）时，把主界面拿出来
             showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
             ThreadPool.RegisterWaitForSingleObject(showSignal, delegate { panel.Dispatcher.BeginInvoke(new Action(ShowMain)); }, null, Timeout.Infinite, false);
+            // 装新版、卸载时安装程序叫它退出：照点托盘“退出”那样收拾干净（停掉 ssh 等子进程）
+            quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Setup.QuitEventName);
+            ThreadPool.RegisterWaitForSingleObject(quitSignal, delegate { panel.Dispatcher.BeginInvoke(new Action(Quit)); }, null, Timeout.Infinite, true);
 
             // 分享出去的文件由本程序提供；公开的到点关掉（程序没开时到点的，下次启动先关）
             FileServer.Start();
