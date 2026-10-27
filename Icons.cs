@@ -10,6 +10,7 @@ namespace TailOrbit
     static class Icons
     {
         static readonly Dictionary<string, Geometry> shapes = new Dictionary<string, Geometry>();
+        static readonly Dictionary<string, string> sources = new Dictionary<string, string>();
 
         static Icons()
         {
@@ -39,6 +40,19 @@ namespace TailOrbit
             Add("max", Box(6.5, 6.5, 11, 11, 1.5));
             Add("restore", Box(5.5, 8.5, 10, 10, 1.5) + " M8.5,5.5 H17 A1.5,1.5 0 0 1 18.5,7 V15.5");
             Add("close", "M7,7 L17,17 M17,7 L7,17");
+            Add("terminal", "M4.5,17 L10,12 L4.5,7 M12,19 H19.5");
+            Add("remote", Box(2.5, 3.5, 19, 13, 2) + " M8.5,20.5 H15.5 M12,16.5 V20.5 M9.5,10 L12,7.5 L14.5,10 M12,7.5 V13");
+            Add("globe", Ring(12, 12, 9) + " M3,12 H21 M12,3 C14.5,5.6 15.8,8.6 15.8,12 C15.8,15.4 14.5,18.4 12,21 C9.5,18.4 8.2,15.4 8.2,12 C8.2,8.6 9.5,5.6 12,3 Z");
+            Add("bell", "M6,9 A6,6 0 0 1 18,9 C18,15 20.5,16.5 20.5,16.5 H3.5 C3.5,16.5 6,15 6,9 Z M10.2,20 A2,2 0 0 0 13.8,20");
+            Add("bell-off", "M6,9 A6,6 0 0 1 18,9 C18,15 20.5,16.5 20.5,16.5 H3.5 C3.5,16.5 6,15 6,9 Z M10.2,20 A2,2 0 0 0 13.8,20 M3,3 L21,21");
+            Add("lock", Box(5, 11, 14, 10, 2) + " M8,11 V7.5 A4,4 0 0 1 16,7.5 V11");
+            Add("plus", "M12,5 V19 M5,12 H19");
+            Add("refresh", "M20,11 A8,8 0 1 0 17.7,16.6 M20,4.5 V11 H13.5");
+            Add("external", "M14,4 H20 V10 M20,4 L11,13 M18,13.5 V18.5 A1.5,1.5 0 0 1 16.5,20 H5.5 A1.5,1.5 0 0 1 4,18.5 V7.5 A1.5,1.5 0 0 1 5.5,6 H10.5");
+            Add("drive", Box(2.5, 13, 19, 7.5, 2) + " M5.5,13 L8,4.5 H16 L18.5,13 M6.5,16.75 L6.51,16.75 M10,16.75 L10.01,16.75");
+            Add("folder-plus", "M3.5,6.5 A2,2 0 0 1 5.5,4.5 H9.5 L11.5,7 H18.5 A2,2 0 0 1 20.5,9 V17.5 A2,2 0 0 1 18.5,19.5 H5.5 A2,2 0 0 1 3.5,17.5 Z M12,10.5 V16.5 M9,13.5 H15");
+            Add("exit", "M9,20.5 H5.5 A2,2 0 0 1 3.5,18.5 V5.5 A2,2 0 0 1 5.5,3.5 H9 M15.5,16.5 L20,12 L15.5,7.5 M20,12 H9");
+            Add("port", Ring(12, 12, 9) + " M8,12 H16 M13,9 L16,12 L13,15");
         }
 
         static string Box(double x, double y, double w, double h, double r)
@@ -57,11 +71,18 @@ namespace TailOrbit
             var g = Geometry.Parse(data.Trim());
             g.Freeze();
             shapes[name] = g;
+            sources[name] = data.Trim();
         }
 
         public static Geometry Get(string name)
         {
             return shapes[name];
+        }
+
+        // 原始路径数据：分享出去的网页里用同一套图标
+        public static string Data(string name)
+        {
+            return sources[name];
         }
 
         public static string ForOs(string os)
