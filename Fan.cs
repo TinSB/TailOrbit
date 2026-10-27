@@ -280,8 +280,11 @@ namespace TailOrbit
         // 有 Windows Terminal 就在里面开，没有就用命令提示符
         public static void Open(string target)
         {
-            try { Process.Start("wt.exe", "ssh " + target); }
-            catch (Win32Exception) { Process.Start("cmd.exe", "/k ssh " + target); }
+            Ui.Launch(() =>
+            {
+                try { Process.Start("wt.exe", "ssh " + target); }
+                catch (Win32Exception) { Process.Start("cmd.exe", "/k ssh " + target); }
+            });
         }
     }
 

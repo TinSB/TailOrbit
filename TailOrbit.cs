@@ -1,8 +1,9 @@
 // TailOrbit：Tailscale 的 Windows 小工具——把文件拖到设备上，就用 Taildrop 发过去
 // 主界面（MainWindow.cs、Star.cs）：点托盘图标或开始菜单打开。“星网”——本机在中间，设备按直连 / 中继 / 离线排在三圈上；
 // 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、网页、发文件、复制域名、掉线提醒）；
-// 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的，右上齿轮里是开机自启和退出。
+// 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。开机自启、界面语言在本机页，退出在托盘菜单。
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
+// 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
 using System;
@@ -13,6 +14,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -62,9 +64,55 @@ namespace TailOrbit
                 app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 // 常驻程序出了没想到的错也不能悄悄消失（消失了热键就没了），记下来接着跑
                 app.DispatcherUnhandledException += (s, e) => { Log.Write(e.Exception); e.Handled = true; };
+                L.Use(Settings.Language);
                 new Host().Start(!args.Contains("--tray"));
                 app.Run();
             }
+        }
+    }
+
+    // 程序是 csc 直接编出来的 IL，第一次用到的代码都要在界面线程上现场编译（全部加起来约 0.35 秒），
+    // 散落在第一次切页、弹菜单、按快捷键的那一下。启动后趁空闲先编好：每片不超过 2ms，排在界面所有活儿后面，动画照常跑
+    static class Warm
+    {
+        // 先编最先会用到的：星网、设备菜单、各页，再是快捷面板和二维码，其余按原顺序
+        static readonly string[] First = { "MainWindow", "Node", "Fan", "Kit", "Segmented", "NetPage", "DevicePage", "SharePage", "DrivePage", "QuickPanel", "Qr" };
+        const BindingFlags All = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+
+        public static void Start(Action done)
+        {
+            // 列方法本身也要反射：做成按需取，和编译一起分片，不在第一片里一口气列完
+            var todo = typeof(Warm).Assembly.GetTypes()
+                .Where(t => !t.ContainsGenericParameters && !typeof(Delegate).IsAssignableFrom(t))
+                .OrderBy(Rank)
+                .SelectMany(t => t.GetMethods(All).Cast<MethodBase>().Concat(t.GetConstructors(All & ~BindingFlags.Static)))
+                .Where(m => !m.IsAbstract && !m.ContainsGenericParameters && (m.Attributes & MethodAttributes.PinvokeImpl) == 0
+                    && (m.GetMethodImplementationFlags() & (MethodImplAttributes.InternalCall | MethodImplAttributes.Runtime)) == 0)
+                .GetEnumerator();
+            Slice(todo, done);
+        }
+
+        static int Rank(Type t)
+        {
+            while (t.DeclaringType != null) t = t.DeclaringType;   // 闭包、async 状态机跟着它外面那个类
+            int i = Array.IndexOf(First, t.Name);
+            return i < 0 ? First.Length : i;
+        }
+
+        static void Slice(IEnumerator<MethodBase> todo, Action done)
+        {
+            Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                var watch = Stopwatch.StartNew();
+                bool more = true;
+                while (watch.Elapsed.TotalMilliseconds < 2 && (more = todo.MoveNext()))
+                {
+                    try { System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(todo.Current.MethodHandle); }
+                    catch (Exception) { }   // 个别方法提前编不了：跳过，用到时照常现场编
+                }
+                if (more) Slice(todo, done);
+                else { todo.Dispose(); done(); }
+            }));
         }
     }
 
@@ -222,9 +270,9 @@ namespace TailOrbit
         static string Explain(string err)
         {
             string line = (err ?? "").Trim().Split('\n')[0].Trim();
-            if (line.Contains("NeedsLogin") || line.Contains("not logged in")) return "Tailscale 没有登录";
-            if (line.Contains("failed to connect") || line.Contains("is Tailscale running")) return "Tailscale 没有运行";
-            return line.Length > 0 ? line : "读不到设备列表";
+            if (line.Contains("NeedsLogin") || line.Contains("not logged in")) return L.T("Tailscale 没有登录");
+            if (line.Contains("failed to connect") || line.Contains("is Tailscale running")) return L.T("Tailscale 没有运行");
+            return line.Length > 0 ? line : L.T("读不到设备列表");
         }
     }
 
@@ -290,32 +338,52 @@ namespace TailOrbit
             GetClassName(fg, cls, cls.Capacity);
             try
             {
-                dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));
-                dynamic view = null;
+                object shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));
+                object windows = Call(shell, "Windows"), view = null;
                 if (cls.ToString() == "CabinetWClass")
                 {
                     // Win11 一个资源管理器窗口里可能开着几个标签页，只取正在显示的那个
                     IntPtr tab = FindWindowEx(fg, IntPtr.Zero, "ShellTabWindowClass", null);
-                    foreach (dynamic w in shell.Windows())
+                    int count = Convert.ToInt32(Get(windows, "Count"));
+                    for (int i = 0; i < count; i++)
                     {
-                        if (new IntPtr(Convert.ToInt64(w.HWND)) != fg) continue;
+                        object w = Call(windows, "Item", i);
+                        if (w == null || new IntPtr(Convert.ToInt64(Get(w, "HWND"))) != fg) continue;
                         if (tab != IntPtr.Zero && TabOf(w) != tab) continue;
-                        view = w.Document;
+                        view = Get(w, "Document");
                         break;
                     }
                 }
                 else if (cls.ToString() == "Progman" || cls.ToString() == "WorkerW")
                 {
-                    object loc = 0, root = null;
-                    int hwnd;
-                    view = shell.Windows().FindWindowSW(ref loc, ref root, 8, out hwnd, 1).Document;   // SWC_DESKTOP, SWFO_NEEDDISPATCH
+                    // FindWindowSW(ref loc, ref root, SWC_DESKTOP, out hwnd, SWFO_NEEDDISPATCH)：第 1、2、4 个参数按引用传
+                    var args = new object[] { 0, null, 8, 0, 1 };
+                    var byRef = new ParameterModifier(5);
+                    byRef[0] = byRef[1] = byRef[3] = true;
+                    object desk = windows.GetType().InvokeMember("FindWindowSW", BindingFlags.InvokeMethod, null, windows, args, new[] { byRef }, null, null);
+                    if (desk != null) view = Get(desk, "Document");
                 }
                 if (view != null)
-                    foreach (dynamic item in view.SelectedItems()) paths.Add((string)item.Path);
+                {
+                    object items = Call(view, "SelectedItems");
+                    int count = Convert.ToInt32(Get(items, "Count"));
+                    for (int i = 0; i < count; i++) paths.Add((string)Get(Call(items, "Item", i), "Path"));
+                }
             }
             catch (Exception) { }   // 资源管理器正忙或窗口正在关：当成没选中
             // 盘符本身（比如在“此电脑”里选了 C 盘）不发
             return paths.Where(p => File.Exists(p) || (Directory.Exists(p) && System.IO.Path.GetPathRoot(p) != p)).ToList();
+        }
+
+        // 直接走 IDispatch 调属性和方法（不用 dynamic：它第一次绑定要几百毫秒）
+        static object Get(object o, string name)
+        {
+            return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null);
+        }
+
+        static object Call(object o, string name, params object[] args)
+        {
+            return o.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, o, args);
         }
 
         static IntPtr TabOf(object browser)
@@ -371,7 +439,7 @@ namespace TailOrbit
                 foreach (var p in Paths)
                 {
                     if (!Directory.Exists(p)) { files.Add(p); continue; }
-                    Progress(Unknown, "打包中");
+                    Progress(Unknown, L.T("打包中"));
                     Directory.CreateDirectory(temp);
                     files.Add(Zip(p, temp));
                 }
@@ -465,7 +533,7 @@ namespace TailOrbit
             foreach (var f in files) args.Append(" \"").Append(f).Append('"');
             args.Append(' ').Append(Target.Ip).Append(':');
             string lastError = null;
-            Progress(watch == null ? Unknown : 0, watch == null ? "发送中" : "0%");
+            Progress(watch == null ? Unknown : 0, watch == null ? L.T("发送中") : "0%");
             cp = Process.Start(Tailscale.Psi(args.ToString()));
             cp.OutputDataReceived += (s, e) => { };
             cp.ErrorDataReceived += (s, e) =>
@@ -482,7 +550,7 @@ namespace TailOrbit
                     }
                     report();
                 }
-                else if (line.StartsWith("# warning:")) Progress(Keep, "对方没回应，还在重试");
+                else if (line.StartsWith("# warning:")) Progress(Keep, L.T("对方没回应，还在重试"));
                 else if (line.Length > 0 && !line.StartsWith("sending \"")) lastError = line;
             };
             cp.BeginOutputReadLine();
@@ -490,7 +558,7 @@ namespace TailOrbit
             if (canceled) Kill(cp);
             cp.WaitForExit();   // 不设时限：大文件发多久都等
             if (canceled) return "";
-            return cp.ExitCode == 0 ? null : (lastError ?? "发送失败");
+            return cp.ExitCode == 0 ? null : (lastError ?? "发送失败");   // 存原文进记录，显示时再按当前语言翻
         }
     }
 
@@ -662,8 +730,19 @@ namespace TailOrbit
     // 快捷面板和主界面共用的小工具
     static class Ui
     {
-        public static readonly FontFamily TextFont = new FontFamily("Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI");
-        public static readonly FontFamily DisplayFont = new FontFamily("Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI");
+        // 西文用 Segoe UI，汉字、假名、韩文各用那个语言自己的系统字体（日文不能拿中文字形顶替）
+        public static FontFamily TextFont { get { return Font("Segoe UI Variable Text, Segoe UI"); } }
+        public static FontFamily DisplayFont { get { return Font("Segoe UI Variable Display, Segoe UI"); } }
+        static readonly Dictionary<string, FontFamily> fonts = new Dictionary<string, FontFamily>();
+
+        static FontFamily Font(string latin)
+        {
+            string cjk = L.Code == "zh-Hant" ? "Microsoft JhengHei UI" : L.Code == "ja" ? "Yu Gothic UI" : L.Code == "ko" ? "Malgun Gothic" : "Microsoft YaHei UI";
+            string name = latin + ", " + cjk;
+            FontFamily f;
+            if (!fonts.TryGetValue(name, out f)) fonts[name] = f = new FontFamily(name);
+            return f;
+        }
         public static readonly FontFamily MonoFont = new FontFamily("Cascadia Mono, Consolas");
         public static readonly IEasingFunction Ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         public static readonly IEasingFunction Glide = new CubicEase { EasingMode = EasingMode.EaseInOut };
@@ -708,6 +787,19 @@ namespace TailOrbit
         public static void Tint(SolidColorBrush b, Color to, int ms)
         {
             b.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(to, TimeSpan.FromMilliseconds(ms)));
+        }
+
+        // 起外部程序（浏览器、资源管理器、终端）：放到后台线程，别让界面线程等它几十毫秒、把正在播的动画卡住。
+        // 没装、打不开（比如没有默认浏览器）就算了，和以前一样不弹错
+        public static void Launch(Action start)
+        {
+            var t = new Thread(() =>
+            {
+                try { start(); }
+                catch (System.ComponentModel.Win32Exception) { }
+            }) { IsBackground = true };
+            t.SetApartmentState(ApartmentState.STA);   // ShellExecute 要单线程套间
+            t.Start();
         }
 
         public static void After(int ms, Action a)
@@ -763,7 +855,7 @@ namespace TailOrbit
 
         public static string Describe(List<string> paths)
         {
-            return paths.Count == 1 ? System.IO.Path.GetFileName(paths[0]) : paths.Count + " 个项目";
+            return paths.Count == 1 ? System.IO.Path.GetFileName(paths[0]) : L.T("{0} 个项目", paths.Count);
         }
 
         public static string FormatSize(long n)
@@ -779,9 +871,10 @@ namespace TailOrbit
         public static string When(DateTime t)
         {
             var today = DateTime.Today;
-            if (t.Date == today) return "今天 " + t.ToString("HH:mm");
-            if (t.Date == today.AddDays(-1)) return "昨天 " + t.ToString("HH:mm");
-            return t.Year == today.Year ? t.ToString("M月d日 HH:mm") : t.ToString("yyyy年M月d日");
+            if (t.Date == today) return L.T("今天 {0}", t.ToString("HH:mm"));
+            if (t.Date == today.AddDays(-1)) return L.T("昨天 {0}", t.ToString("HH:mm"));
+            var f = L.Culture.DateTimeFormat;   // 日期按界面语言的习惯写：中文 10月27日，英文 October 27
+            return t.Year == today.Year ? t.ToString(f.MonthDayPattern + " HH:mm", L.Culture) : t.ToString(f.ShortDatePattern, L.Culture);
         }
 
         // 托盘、窗口、开始菜单共用的图标：编译时嵌进程序的 TailOrbit.ico（石墨底，本机和一颗卫星）
@@ -816,6 +909,7 @@ namespace TailOrbit
         MainWindow main;
         HwndSource sink;
         WinForms.NotifyIcon tray;
+        WinForms.ToolStripItem trayOpen, trayQuit;
         EventWaitHandle showSignal;
         bool sweeping;
 
@@ -832,16 +926,23 @@ namespace TailOrbit
 
             tray = new WinForms.NotifyIcon { Icon = Icon, Text = "TailOrbit" };
             // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
-            Action open = () => Ui.After(250, ShowMain);
+            Action open = () =>
+            {
+                Ui.After(250, ShowMain);
+                if (main == null) main = new MainWindow(this);   // 反正要等这 250ms：先把窗口建好，到点只剩显示
+            };
             var menu = new WinForms.ContextMenuStrip();
-            menu.Items.Add("打开主界面", null, delegate { open(); });
-            menu.Items.Add("退出", null, delegate { Quit(); });
+            trayOpen = menu.Items.Add("", null, delegate { open(); });
+            trayQuit = menu.Items.Add("", null, delegate { Quit(); });
+            NameTray();
             tray.ContextMenuStrip = menu;
             tray.MouseClick += (s, e) => { if (e.Button == WinForms.MouseButtons.Left) open(); };
             tray.Visible = true;
 
             if (!RegisterHotKey(sink.Handle, 1, 0x0002 | 0x0001 | 0x4000, 0x41))   // Ctrl+Alt+A，按住不连发
-                Notify("Ctrl+Alt+A 被别的程序占用了", "从托盘图标打开主界面也能发文件。");
+                Notify(L.T("Ctrl+Alt+A 被别的程序占用了"), L.T("从托盘图标打开主界面也能发文件。"));
+            // Win+Alt+V 读 Mac 的剪贴板（Win+V 是本机的剪贴板历史）；被占了就只能从设备菜单里读
+            if (RegisterHotKey(sink.Handle, 2, 0x0008 | 0x0001 | 0x4000, 0x56)) ClipShare.Hotkey = "Win+Alt+V";
 
             // 别处再启动一次本程序（开始菜单、双击）时，把主界面拿出来
             showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
@@ -849,6 +950,7 @@ namespace TailOrbit
 
             // 分享出去的文件由本程序提供；公开的到点关掉（程序没开时到点的，下次启动先关）
             FileServer.Start();
+            ClipShare.Start(this);
             var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             sweep.Tick += delegate { Sweep(); };
             sweep.Start();
@@ -856,6 +958,8 @@ namespace TailOrbit
             Inbox.Start();
             Alerts.Start(this);
             if (showMain) ShowMain();
+            // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好，第一次按 Ctrl+Alt+A 少等一截
+            Ui.After(2500, () => Warm.Start(() => new WindowInteropHelper(panel).EnsureHandle()));
         }
 
         void Sweep()
@@ -865,8 +969,31 @@ namespace TailOrbit
             Task.Run(() => Shares.Sweep()).ContinueWith(t =>
             {
                 sweeping = false;
-                if (!t.IsFaulted && t.Result.Count > 0) Notify("公开分享到时间关了", string.Join("、", t.Result));
+                if (!t.IsFaulted && t.Result.Count > 0) Notify(L.T("公开分享到时间关了"), string.Join(L.T("、"), t.Result));
             }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        void NameTray()
+        {
+            trayOpen.Text = L.T("打开主界面");
+            trayQuit.Text = L.T("退出");
+        }
+
+        // 换界面语言：主界面原地换成新语言的一份（停在本机页、位置大小不变），快捷面板和托盘菜单也换
+        public void SetLanguage(string setting)
+        {
+            if ((main != null && main.Busy) || panel.Busy) { Notify(L.T("先不换语言"), L.T("有文件正在发送，发完再换。")); return; }
+            Settings.Language = setting;
+            L.Use(setting);
+            NameTray();
+            panel.Close();   // 上面已经挡掉了正在发送的情况：快捷面板总能换成新语言的一份
+            panel = new QuickPanel(this);
+            if (main == null) return;
+            var old = main;
+            main = new MainWindow(this);
+            main.Replace(old, "device");
+            old.Quitting = true;
+            old.Close();
         }
 
         public void ShowMain()
@@ -882,9 +1009,22 @@ namespace TailOrbit
             main.Switch(key);
         }
 
+        // 剪贴板经过了这台设备：星网上光点流一小段
+        public void ClipFlow(string ip, bool inward)
+        {
+            if (main != null) main.ClipFlow(ip, inward);
+        }
+
         IntPtr OnMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (msg != 0x0312 || wParam.ToInt32() != 1) return IntPtr.Zero;   // WM_HOTKEY
+            if (msg != 0x0312) return IntPtr.Zero;   // WM_HOTKEY
+            if (wParam.ToInt32() == 2)
+            {
+                handled = true;
+                panel.Dispatcher.BeginInvoke(new Action(ClipShare.PullAny));
+                return IntPtr.Zero;
+            }
+            if (wParam.ToInt32() != 1) return IntPtr.Zero;
             handled = true;
             IntPtr fg = GetForegroundWindow();   // 先记下按热键时在前台的窗口，再去读它的选中项
             panel.Dispatcher.BeginInvoke(new Action(() =>
@@ -905,6 +1045,7 @@ namespace TailOrbit
             panel.Abort();
             if (main != null) main.Abort();
             UnregisterHotKey(sink.Handle, 1);
+            UnregisterHotKey(sink.Handle, 2);
             tray.Visible = false;
             tray.Dispose();
             if (main != null) main.Quitting = true;

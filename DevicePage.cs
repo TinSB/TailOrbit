@@ -1,4 +1,4 @@
-// 本机页：这台电脑在 Tailscale 里叫什么、地址是多少；常用开关（tailscale set）和出口节点
+// 本机页：这台电脑在 Tailscale 里叫什么、地址是多少；常用开关（tailscale set）和出口节点；TailOrbit 自己的开机自启、剪贴板互通和界面语言
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -7,8 +7,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 
 namespace TailOrbit
@@ -67,7 +69,7 @@ namespace TailOrbit
             {
                 Width = 36, Height = 36, CornerRadius = new CornerRadius(18), Background = Th.Fg, BorderBrush = Th.Bg, BorderThickness = new Thickness(3),
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 6, 8),
-                Child = new IconView("lock", 15, Th.Ink, 2.2), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = badgeScale, ToolTip = Ui.Tip(Th, "已挡住所有连入")
+                Child = new IconView("lock", 15, Th.Ink, 2.2), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = badgeScale, ToolTip = Ui.Tip(Th, L.T("已挡住所有连入"))
             });
             name = new TextBlock { FontFamily = Ui.DisplayFont, FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 16, 0, 20), TextTrimming = TextTrimming.CharacterEllipsis };
             dns = Kit.Mono("", 13, Th.Fg);
@@ -82,8 +84,11 @@ namespace TailOrbit
             left.Children.Add(dnsRow);
             left.Children.Add(Kit.CopyRow(Th, ip));
             var info = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
-            info.Children.Add(Kit.InfoRow(Th, "账号", account));
-            info.Children.Add(Kit.InfoRow(Th, "版本", version));
+            info.Children.Add(Kit.InfoRow(Th, L.T("账号"), account));
+            info.Children.Add(Kit.InfoRow(Th, L.T("版本"), version));
+            info.Children.Add(AutostartRow());
+            info.Children.Add(ClipRow());
+            info.Children.Add(LanguageRow());
             left.Children.Add(info);
             Grid.SetColumn(left, 0);
             grid.Children.Add(left);
@@ -91,15 +96,15 @@ namespace TailOrbit
             // 右边：出口节点和开关
             var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             var head = new StackPanel { Orientation = Orientation.Horizontal };
-            head.Children.Add(Kit.Title(Th, "出口节点"));
-            var sub = Kit.Text("上网的流量从哪台设备出去", 13, Th.Mute);
+            head.Children.Add(Kit.Title(Th, L.T("出口节点")));
+            var sub = Kit.Text(L.T("上网的流量从哪台设备出去"), 13, Th.Mute);
             sub.Margin = new Thickness(12, 3, 0, 0);
             head.Children.Add(sub);
             right.Children.Add(head);
             right.Children.Add(exits);
-            right.Children.Add(Kit.Title(Th, "开关"));
+            right.Children.Add(Kit.Title(Th, L.T("开关")));
             var tiles = new UniformGrid { Columns = 2, Margin = new Thickness(0, 14, 0, 0) };
-            for (int i = 0; i < Switches.Length; i++) tiles.Children.Add(SwitchTile(Switches[i][0], Switches[i][1], i % 2 == 0));
+            for (int i = 0; i < Switches.Length; i++) tiles.Children.Add(SwitchTile(Switches[i][0], L.T(Switches[i][1]), i % 2 == 0));
             right.Children.Add(tiles);
             Grid.SetColumn(right, 2);
             grid.Children.Add(right);
@@ -127,7 +132,7 @@ namespace TailOrbit
         {
             var d = new Data();
             var g = Tailscale.Run("get --json");
-            if (g.Code != 0) { d.Error = Tailscale.FirstLine(g.Err, "读不到本机设置"); return d; }
+            if (g.Code != 0) { d.Error = Tailscale.FirstLine(g.Err, L.T("读不到本机设置")); return d; }
             d.Prefs = Tailscale.Json(g.Out);
             var s = Tailscale.Run("status --json");
             if (s.Code == 0) d.Status = Tailscale.Json(s.Out);
@@ -179,8 +184,8 @@ namespace TailOrbit
         void ShowVersion()
         {
             if (ver == "") { version.Text = ""; return; }
-            if (string.IsNullOrEmpty(upstream) || upstream == ver) version.Text = ver + (upstream == ver ? " · 最新" : "");
-            else version.Text = ver + " · 可更新到 " + upstream;
+            if (string.IsNullOrEmpty(upstream) || upstream == ver) version.Text = ver + (upstream == ver ? " · " + L.T("最新") : "");
+            else version.Text = ver + " · " + L.T("可更新到 {0}", upstream);
         }
 
         // ---------- 出口节点 ----------
@@ -188,32 +193,32 @@ namespace TailOrbit
         void RenderExits()
         {
             exits.Children.Clear();
-            exits.Children.Add(Radio("不用，直接上网", "", current == "", true, () => PickExit("")));
+            exits.Children.Add(Radio(L.T("不用，直接上网"), "", current == "", true, () => PickExit("")));
             foreach (var x in options)
             {
                 var e = x;
-                exits.Children.Add(Radio(e.Name, e.Online ? "" : "离线", current == e.Ip, e.Online, () => PickExit(e.Ip)));
+                exits.Children.Add(Radio(e.Name, e.Online ? "" : L.T("离线"), current == e.Ip, e.Online, () => PickExit(e.Ip)));
             }
             if (options.Count > 0)
             {
-                exits.Children.Add(SwitchTile("exit-node-allow-lan-access", "走出口节点时也能连家里的局域网", null));
+                exits.Children.Add(SwitchTile("exit-node-allow-lan-access", L.T("走出口节点时也能连家里的局域网"), null));
                 var t = toggles["exit-node-allow-lan-access"];
                 t.Set(true.Equals(Tailscale.Get(prefs, "exit-node-allow-lan-access")), false);
                 return;
             }
             // 一台能当出口的都没有：告诉他怎么开
-            var label = Kit.Text("还没有能用的出口节点", 14.5, Th.Mute);
+            var label = Kit.Text(L.T("还没有能用的出口节点"), 14.5, Th.Mute);
             label.Margin = new Thickness(18, 0, 0, 0);
-            var how = Kit.Button(Th, stepsOpen ? "收起" : "怎么开", false, () => { stepsOpen = !stepsOpen; RenderExits(); });
+            var how = Kit.Button(Th, stepsOpen ? L.T("收起") : L.T("怎么开"), false, () => { stepsOpen = !stepsOpen; RenderExits(); });
             how.Height = 38;
             how.Margin = new Thickness(0, 0, 8, 0);
             var empty = Kit.Dashed(Th, new Grid { Height = 54, Children = { Ui.Columns(0, label, how) } }, 14);
             exits.Children.Add(empty);
             if (!stepsOpen) return;
             var steps = new StackPanel();
-            steps.Children.Add(Step(1, "在要当出口的那台设备上运行", Command("sudo tailscale set --advertise-exit-node")));
-            steps.Children.Add(Step(2, "在后台批准它当出口节点", Kit.Button(Th, "打开后台", false, () => OpenUrl("https://login.tailscale.com/admin/machines"))));
-            steps.Children.Add(Step(3, "回到这里选它", null));
+            steps.Children.Add(Step(1, L.T("在要当出口的那台设备上运行"), Command("sudo tailscale set --advertise-exit-node")));
+            steps.Children.Add(Step(2, L.T("在后台批准它当出口节点"), Kit.Button(Th, L.T("打开后台"), false, () => OpenUrl("https://login.tailscale.com/admin/machines"))));
+            steps.Children.Add(Step(3, L.T("回到这里选它"), null));
             var box = new Border { Margin = new Thickness(0, 8, 0, 0), Padding = new Thickness(16, 8, 12, 8), CornerRadius = new CornerRadius(14), Background = Th.Tile, Child = steps };
             exits.Children.Add(box);
             Ui.AnimFrom(box, OpacityProperty, 0, 1, 220);
@@ -243,7 +248,7 @@ namespace TailOrbit
             {
                 current = before;
                 RenderExits();
-                Host.Notify("出口节点没换成", Tailscale.FirstLine(r.Err, "tailscale set 失败"));
+                Host.Notify(L.T("出口节点没换成"), Tailscale.FirstLine(r.Err, L.T("tailscale set 失败")));
             }
             Load();
         }
@@ -270,8 +275,171 @@ namespace TailOrbit
 
         static void OpenUrl(string url)
         {
-            try { Process.Start(url); }
-            catch (System.ComponentModel.Win32Exception) { }   // 没有默认浏览器
+            Ui.Launch(() => Process.Start(url));
+        }
+
+        // ---------- TailOrbit 自己的：开机自启、语言 ----------
+
+        FrameworkElement AutostartRow()
+        {
+            var t = new Toggle(Th, Autostart.Enabled);
+            var row = Kit.InfoRow(Th, L.T("开机自启"), t);
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
+            var shift = new TranslateTransform();
+            row.RenderTransform = shift;
+            row.MouseLeftButtonUp += delegate
+            {
+                string why = null;
+                try { Autostart.Set(!t.On); }
+                catch (UnauthorizedAccessException e) { why = e.Message; }   // 注册表被策略锁着：开关拨回原样、摇一下，悬停看原因
+                catch (System.Security.SecurityException e) { why = e.Message; }
+                t.Set(Autostart.Enabled, true);
+                row.ToolTip = why == null ? null : Ui.Tip(Th, why);
+                if (why != null) Ui.Shake(shift);
+            };
+            return row;
+        }
+
+        // 剪贴板互通：开着时自己的手机、Mac 能读这台电脑的剪贴板，iPhone 能把它的发过来。
+        // 开着时开关左边弹出一个二维码按钮；刚打开时直接把二维码亮出来给手机扫
+        FrameworkElement ClipRow()
+        {
+            var t = new Toggle(Th, Settings.ClipOn);
+            var scale = new ScaleTransform(t.On ? 1 : 0, t.On ? 1 : 0);
+            var glyph = new IconView("qr", 17, Th.Mute);
+            var qr = new Border
+            {
+                Width = 32, Height = 32, Margin = new Thickness(0, 0, 10, 0), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = glyph,
+                ToolTip = Ui.Tip(Th, L.T("手机扫码")), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = scale, IsHitTestVisible = t.On
+            };
+            qr.MouseEnter += delegate { qr.Background = Th.Hair; glyph.Stroke = Th.Fg; };
+            qr.MouseLeave += delegate { qr.Background = Brushes.Transparent; glyph.Stroke = Th.Mute; };
+            var row = Kit.InfoRow(Th, L.T("剪贴板互通"), new StackPanel { Orientation = Orientation.Horizontal, Children = { qr, t } });
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
+            var shift = new TranslateTransform();
+            row.RenderTransform = shift;
+            qr.MouseLeftButtonUp += (s, e) =>
+            {
+                e.Handled = true;   // 别让这一行当成拨开关
+                // 二维码开着时再点是想收起：按下那一下已经把它关了，别马上又开一个
+                if (qrPop != null && (qrPop.IsOpen || (DateTime.Now - qrClosed).TotalMilliseconds < 250)) { qrPop.IsOpen = false; return; }
+                ShowQr(row);
+            };
+            bool busy = false;
+            row.MouseLeftButtonUp += async delegate
+            {
+                if (busy) return;
+                busy = true;
+                bool want = !t.On;
+                t.Set(want, true);
+                string why = await Task.Run(() => ClipShare.Turn(want));
+                busy = false;
+                if (why != null)
+                {
+                    t.Set(!want, true);   // 没开成、没关成：拨回原样、摇一下，悬停看原因
+                    row.ToolTip = Ui.Tip(Th, why);
+                    Ui.Shake(shift);
+                    return;
+                }
+                row.ToolTip = null;
+                qr.IsHitTestVisible = want;
+                Ui.ScaleTo(scale, want ? 1 : 0, want ? 420 : 200, want ? Ui.Spring : Ui.Ease);
+                if (want) ShowQr(row);
+            };
+            return row;
+        }
+
+        Popup qrPop;   // 剪贴板二维码，和它上次收起的时间
+        DateTime qrClosed;
+
+        // 二维码一直是浅底深点，深色主题下也扫得出来；下面是网址，可以复制了发给自己的 Mac
+        void ShowQr(FrameworkElement anchor)
+        {
+            string url = ClipShare.Url;
+            var m = url == null ? null : Qr.Encode(url);
+            if (m == null) return;
+            const double width = 264, pad = 16;   // pad：给阴影留的边
+            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = anchor.ActualWidth - width - pad, VerticalOffset = 4 - pad };
+            qrPop = popup;
+            popup.Closed += delegate { qrClosed = DateTime.Now; };
+            var tile = new Border { Width = 212, Height = 212, Padding = new Thickness(17), CornerRadius = new CornerRadius(14), Background = SharePage.QrPaper, Child = new QrView(m, SharePage.QrInk) };
+            var hint = new TextBlock { Text = L.T("登录了 Tailscale 的手机扫一下就能打开"), FontSize = 13, LineHeight = 19, Foreground = Th.Mute, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(4, 14, 4, 12) };
+            var link = Kit.CopyRow(Th, Kit.Mono(url, 12, Th.Fg));
+            link.Background = Th.Bg;
+            var shift = new TranslateTransform();
+            var card = new Border
+            {
+                Width = width, Margin = new Thickness(pad), Padding = new Thickness(14, 16, 14, 14), CornerRadius = new CornerRadius(16), Background = Th.Pop, BorderBrush = Th.Hair, BorderThickness = new Thickness(1),
+                Child = new StackPanel { Children = { tile, hint, link } }, RenderTransform = shift,
+                Effect = new DropShadowEffect { Color = Colors.Black, Direction = 270, ShadowDepth = 10, BlurRadius = 28, Opacity = Th.Dark ? 0.35 : 0.16 }
+            };
+            TextElement.SetFontFamily(card, Ui.TextFont);
+            popup.Child = card;
+            popup.IsOpen = true;
+            Ui.AnimFrom(card, OpacityProperty, 0, 1, 150);
+            Ui.AnimFrom(shift, TranslateTransform.YProperty, -6, 0, 260, 0, MainEase.Settle);
+        }
+
+        // 语言：点一下在下面弹出一列，选了马上换
+        FrameworkElement LanguageRow()
+        {
+            int cur = Array.IndexOf(L.Codes, Settings.Language);
+            var chev = new IconView("chevron-down", 14, Th.Mute) { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 1, 0, 0) };
+            var value = new StackPanel { Orientation = Orientation.Horizontal, Children = { Kit.Text(cur < 0 ? L.T("跟随系统") : L.Names[cur], 14, Th.Fg), chev } };
+            var row = Kit.InfoRow(Th, L.T("语言"), value);
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
+            row.MouseEnter += delegate { chev.Stroke = Th.Fg; };
+            row.MouseLeave += delegate { chev.Stroke = Th.Mute; };
+            row.MouseLeftButtonUp += delegate
+            {
+                // 列表开着时再点这一行是想收起：按下那一下已经把它关了，别马上又开一个
+                if (langs != null && (langs.IsOpen || (DateTime.Now - langsClosed).TotalMilliseconds < 250)) { langs.IsOpen = false; return; }
+                Languages(row);
+            };
+            return row;
+        }
+
+        Popup langs;   // 语言列表，和它上次收起的时间
+        DateTime langsClosed;
+
+        void Languages(FrameworkElement anchor)
+        {
+            const double width = 210, pad = 16;   // pad：给阴影留的边
+            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = anchor.ActualWidth - width - pad, VerticalOffset = 4 - pad };
+            langs = popup;
+            popup.Closed += delegate { langsClosed = DateTime.Now; };
+            var list = new StackPanel();
+            foreach (var code in new[] { "auto" }.Concat(L.Codes))
+            {
+                string pick = code;
+                bool on = code == Settings.Language;
+                var text = Kit.Text(code == "auto" ? L.T("跟随系统") : L.Names[Array.IndexOf(L.Codes, code)], 14, Th.Fg);
+                FrameworkElement mark = on ? (FrameworkElement)new IconView("check", 15, Th.Fg, 2.2) : new Border();
+                var item = new Border { Height = 38, Padding = new Thickness(12, 0, 10, 0), CornerRadius = new CornerRadius(9), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Ui.Columns(0, text, mark) };
+                item.MouseEnter += delegate { item.Background = Th.Hair; };
+                item.MouseLeave += delegate { item.Background = Brushes.Transparent; };
+                item.MouseLeftButtonUp += delegate
+                {
+                    popup.IsOpen = false;
+                    if (!on) Ui.After(120, () => Host.SetLanguage(pick));   // 等弹出的列表收起再整页换
+                };
+                list.Children.Add(item);
+                if (code == "auto") list.Children.Add(new Border { Height = 1, Background = Th.Hair, Margin = new Thickness(8, 4, 8, 4) });
+            }
+            var shift = new TranslateTransform();
+            var card = new Border
+            {
+                Width = width, Margin = new Thickness(pad), Padding = new Thickness(6), CornerRadius = new CornerRadius(14), Background = Th.Pop, BorderBrush = Th.Hair, BorderThickness = new Thickness(1),
+                Child = list, RenderTransform = shift, Effect = new DropShadowEffect { Color = Colors.Black, Direction = 270, ShadowDepth = 10, BlurRadius = 28, Opacity = Th.Dark ? 0.35 : 0.16 }
+            };
+            TextElement.SetFontFamily(card, Ui.TextFont);
+            popup.Child = card;
+            popup.IsOpen = true;
+            Ui.AnimFrom(card, OpacityProperty, 0, 1, 150);
+            Ui.AnimFrom(shift, TranslateTransform.YProperty, -6, 0, 260, 0, MainEase.Settle);
         }
 
         // ---------- 开关 ----------
@@ -282,6 +450,11 @@ namespace TailOrbit
             toggles[key] = t;
             var label = Kit.Text(text, 14.5, Th.Fg);
             label.Margin = new Thickness(0, 0, 12, 0);
+            // 有的语言开关名长：放不下换到第二行，再放不下才截
+            label.TextWrapping = TextWrapping.Wrap;
+            label.LineHeight = 19;
+            label.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            label.MaxHeight = 40;   // 两行 38，留点余量：125% 缩放取整后会略超
             var shift = new TranslateTransform();
             var tile = new Border { Height = 62, Padding = new Thickness(18, 0, 16, 0), CornerRadius = new CornerRadius(14), Background = Th.Tile, Cursor = Cursors.Hand, Child = Ui.Columns(0, label, t), RenderTransform = shift };
             tile.Margin = leftColumn == null ? new Thickness(0, 0, 0, 8) : leftColumn.Value ? new Thickness(0, 0, 5, 10) : new Thickness(5, 0, 0, 10);
@@ -308,7 +481,7 @@ namespace TailOrbit
             t.Set(!want, true);
             if (key == "shields-up") Shield(!want, true);
             Ui.Shake(shift);
-            tile.ToolTip = Ui.Tip(Th, Tailscale.FirstLine(r.Err, "没改成"));
+            tile.ToolTip = Ui.Tip(Th, Tailscale.FirstLine(r.Err, L.T("没改成")));
         }
 
         void Shield(bool on, bool animate)

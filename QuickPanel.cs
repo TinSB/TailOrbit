@@ -52,7 +52,7 @@ namespace TailOrbit
         {
             this.host = host;
             th = host.Theme;
-            Title = "TailOrbit · 快速发送";
+            Title = L.T("TailOrbit · 快速发送");
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -128,6 +128,8 @@ namespace TailOrbit
             if (job != null) job.Cancel();
         }
 
+        public bool Busy { get { return job != null; } }
+
         protected override void OnDeactivated(EventArgs e)
         {
             base.OnDeactivated(e);
@@ -164,10 +166,10 @@ namespace TailOrbit
             Task.Run(() => Tailscale.Load()).ContinueWith(t =>
             {
                 if (n != loads || job != null) return;
-                if (t.IsFaulted) { devices = new List<Device>(); Message("找不到 Tailscale", true); return; }
+                if (t.IsFaulted) { devices = new List<Device>(); Message(L.T("找不到 Tailscale"), true); return; }
                 var snap = t.Result;
                 if (snap.Error != null) { devices = snap.Devices; Message(snap.Error, true); return; }
-                if (snap.Devices.Count == 0) { devices = snap.Devices; Message("没有能接收文件的设备", false); return; }
+                if (snap.Devices.Count == 0) { devices = snap.Devices; Message(L.T("没有能接收文件的设备"), false); return; }
                 bool same = snap.Devices.Select(d => d.Key).SequenceEqual(devices.Select(d => d.Key)) && rows.Count == snap.Devices.Count;
                 bool wasEmpty = rows.Count == 0;
                 devices = snap.Devices;
@@ -188,7 +190,7 @@ namespace TailOrbit
 
         void BuildRows(bool animate)
         {
-            if (devices.Count == 0) { Message("读取设备中…", false); return; }
+            if (devices.Count == 0) { Message(L.T("读取设备中…"), false); return; }
             list.Children.Clear();
             rows.Clear();
             for (int i = 0; i < devices.Count; i++)
@@ -238,7 +240,7 @@ namespace TailOrbit
             r.ActionBtn.MouseLeftButtonUp += (s, e) =>
             {
                 e.Handled = true;
-                if (job != null && index == jobIndex) { job.Cancel(); r.Status.Text = "正在取消"; }
+                if (job != null && index == jobIndex) { job.Cancel(); r.Status.Text = L.T("正在取消"); }
                 else CopyIp(index);
             };
             return r;
@@ -268,7 +270,7 @@ namespace TailOrbit
 
         bool PickFiles()
         {
-            var dlg = new OpenFileDialog { Multiselect = true, Title = "选择要发送的文件" };
+            var dlg = new OpenFileDialog { Multiselect = true, Title = L.T("选择要发送的文件") };
             picking = true;
             bool ok;
             try { ok = dlg.ShowDialog(this) == true; }
@@ -285,9 +287,9 @@ namespace TailOrbit
             job = j;
             jobIndex = i;
             j.Progress = (f, text) => Dispatcher.BeginInvoke(new Action(() => { if (job == j) SetProgress(r, f, text); }));
-            SetProgress(r, SendJob.Unknown, "准备中");
+            SetProgress(r, SendJob.Unknown, L.T("准备中"));
             r.Action.Show("x");
-            r.ActionBtn.ToolTip = Ui.Tip(th, "取消发送");
+            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("取消发送"));
             for (int k = 0; k < rows.Count; k++) if (k != i) Ui.AnimTo(rows[k].Root, OpacityProperty, 0.35, 180);
             Task.Run(() => j.Run()).ContinueWith(t => Finish(r, j, t.IsFaulted ? t.Exception.GetBaseException().Message : t.Result), TaskScheduler.FromCurrentSynchronizationContext());
         }
@@ -302,23 +304,23 @@ namespace TailOrbit
             {
                 files = new List<string>();
                 Done(r);
-                if (!IsVisible) { host.Notify("已发送到 " + j.Target.Name, Ui.Describe(j.Paths)); return; }
+                if (!IsVisible) { host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths)); return; }
                 int v = version;
                 Ui.After(1100, () => { if (v == version) HidePanel(); });
             }
             else if (result == "") Idle(r);
             else
             {
-                Fail(r, result);
-                if (!IsVisible) host.Notify("没发出去：" + j.Target.Name, result);
+                Fail(r, L.T(result));
+                if (!IsVisible) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result));
             }
         }
 
         void CopyIp(int i)
         {
             var r = rows[i];
-            if (!Ui.CopyText(r.Device.Ip)) { r.Status.Text = "剪贴板被占用，再试一次"; return; }
-            r.Status.Text = r.Device.Ip + " 已复制";
+            if (!Ui.CopyText(r.Device.Ip)) { r.Status.Text = L.T("剪贴板被占用，再试一次"); return; }
+            r.Status.Text = L.T("{0} 已复制", r.Device.Ip);
             r.Status.Foreground = th.Ok;
             r.Action.Show("check");
             r.Action.Stroke = th.Ok;
@@ -333,7 +335,7 @@ namespace TailOrbit
                 headerIcon.Show("file");
                 headerIcon.Stroke = th.Mute;
                 headerTile.Background = th.Chip;
-                headerTitle.Text = "选择要发送的文件";
+                headerTitle.Text = L.T("选择要发送的文件");
                 headerSize.Text = "";
                 return;
             }
@@ -341,7 +343,7 @@ namespace TailOrbit
             headerIcon.Show(Icons.ForFiles(files));
             headerIcon.Stroke = th.Ink;
             headerTile.Background = th.Fg;
-            headerTitle.Text = files.Count > 1 ? files.Count + (dirs ? " 个项目" : " 个文件") : System.IO.Path.GetFileName(files[0]);
+            headerTitle.Text = files.Count > 1 ? files.Count + (dirs ? L.T(" 个项目") : L.T(" 个文件")) : System.IO.Path.GetFileName(files[0]);
             headerSize.Text = dirs ? "" : Ui.FormatSize(files.Sum(f => new FileInfo(f).Length));
         }
 
@@ -349,12 +351,12 @@ namespace TailOrbit
         {
             Ui.StopShimmer(ref r.Shimmer);
             Ui.AnimTo(r.Fill, OpacityProperty, 0, 200);
-            r.Status.Text = r.Device.Online ? "" : "离线";
+            r.Status.Text = r.Device.Online ? "" : L.T("离线");
             r.Status.Foreground = th.Mute;
             r.Status.ToolTip = null;
             r.Action.Show("copy");
             r.Action.Stroke = th.Mute;
-            r.ActionBtn.ToolTip = Ui.Tip(th, "复制 IP");
+            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP"));
         }
 
         void SetProgress(Row r, double f, string text)
@@ -383,7 +385,7 @@ namespace TailOrbit
             r.Fill.Background = th.OkSoft;
             Ui.AnimTo(r.Fill, OpacityProperty, 1, 150);
             Ui.AnimTo(r.FillScale, ScaleTransform.ScaleXProperty, 1, 260);
-            r.Status.Text = "已发送";
+            r.Status.Text = L.T("已发送");
             r.Status.Foreground = th.Ok;
             r.Action.Show("check");
             r.Action.Stroke = th.Ok;
@@ -402,7 +404,7 @@ namespace TailOrbit
             r.Status.Foreground = th.Bad;
             r.Action.Show("copy");
             r.Action.Stroke = th.Mute;
-            r.ActionBtn.ToolTip = Ui.Tip(th, "复制 IP");
+            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP"));
             Ui.Shake(r.Shift);
         }
     }

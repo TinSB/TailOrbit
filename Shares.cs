@@ -66,10 +66,10 @@ namespace TailOrbit
             get
             {
                 if (Mine != null || Kind == "path") return Label;
-                if (Kind == "text") return "一段文字";
-                if (Kind == "tcp") return "端口转发 :" + Port;
+                if (Kind == "text") return L.T("一段文字");
+                if (Kind == "tcp") return L.T("端口转发 :{0}", Port);
                 if (Program != "") return Program;
-                return LocalPort > 0 ? "本机 " + LocalPort + " 端口" : Target;
+                return LocalPort > 0 ? L.T("本机 {0} 端口", LocalPort) : Target;
             }
         }
 
@@ -139,6 +139,7 @@ namespace TailOrbit
                         var cfg = h.Value as Dictionary<string, object>;
                         var e = new ServeEntry { Host = hp.Key.Substring(0, colon), Port = port, Path = h.Key, Https = !true.Equals(Tailscale.Get(portCfg, "HTTP")), Public = funnel != null && true.Equals(Tailscale.Get(funnel, hp.Key)) };
                         string proxy = Tailscale.Get(cfg, "Proxy") as string, path = Tailscale.Get(cfg, "Path") as string;
+                        if (port == PrivatePort && e.Path.StartsWith("/c/") && proxy == Origin + e.Path) continue;   // 剪贴板互通的转发：在本机页开关，不算分享
                         if (proxy != null) { e.Kind = "proxy"; e.Target = proxy; }
                         else if (path != null) { e.Kind = "path"; e.Target = path; }
                         else { e.Kind = "text"; e.Target = (Tailscale.Get(cfg, "Text") as string) ?? ""; }
@@ -166,21 +167,21 @@ namespace TailOrbit
             {
                 if (e.Mine != null)
                 {
-                    if (e.Mine.Source == "") e.Dead = "找不到这条分享对应的文件";
-                    else if (!File.Exists(e.Mine.Source) && !Directory.Exists(e.Mine.Source)) e.Dead = "原来的文件已经不在了";
+                    if (e.Mine.Source == "") e.Dead = L.T("找不到这条分享对应的文件");
+                    else if (!File.Exists(e.Mine.Source) && !Directory.Exists(e.Mine.Source)) e.Dead = L.T("原来的文件已经不在了");
                     else if (FileServer.Error != null) e.Dead = FileServer.Error;
                     continue;
                 }
                 if (e.Kind == "path")
                 {
-                    if (!File.Exists(e.Target) && !Directory.Exists(e.Target)) e.Dead = "文件已经不在了";
+                    if (!File.Exists(e.Target) && !Directory.Exists(e.Target)) e.Dead = L.T("文件已经不在了");
                     continue;
                 }
                 int port = e.LocalPort;
                 if (port == 0) continue;
                 if (listeners == null) listeners = Ports.Listeners();
                 int pid;
-                if (!listeners.TryGetValue(port, out pid)) { e.Dead = "没有程序在听"; continue; }
+                if (!listeners.TryGetValue(port, out pid)) { e.Dead = L.T("没有程序在听"); continue; }
                 e.Program = ProcessName(pid);
             }
         }
@@ -206,7 +207,7 @@ namespace TailOrbit
             if (r.Code != 0)
             {
                 Remove(slug);
-                return Tailscale.FirstLine(r.Err, "没分享成");
+                return Tailscale.FirstLine(r.Err, L.T("没分享成"));
             }
             key = "s:" + slug;
             return null;
@@ -223,7 +224,7 @@ namespace TailOrbit
             if (r.Code != 0)
             {
                 Save(before);
-                return Tailscale.FirstLine(r.Err, "没公开成");
+                return Tailscale.FirstLine(r.Err, L.T("没公开成"));
             }
             Tailscale.Run("serve --yes --https=" + PrivatePort + " --set-path=" + e.Path + " off");
             return null;
@@ -233,9 +234,9 @@ namespace TailOrbit
         public static string Unpublish(ServeEntry e)
         {
             var r = Tailscale.Run("serve --bg --yes --https=" + PrivatePort + " --set-path=" + e.Path + " " + e.Target);
-            if (r.Code != 0) return Tailscale.FirstLine(r.Err, "没收回成");
+            if (r.Code != 0) return Tailscale.FirstLine(r.Err, L.T("没收回成"));
             r = Tailscale.Run("funnel --yes --https=" + PublicPort + " --set-path=" + e.Path + " off");
-            if (r.Code != 0) return "公开的那份没关掉：" + Tailscale.FirstLine(r.Err, "funnel off 失败");
+            if (r.Code != 0) return L.T("公开的那份没关掉：{0}", Tailscale.FirstLine(r.Err, L.T("funnel off 失败")));
             Save(new Share { Slug = e.Mine.Slug, Source = e.Mine.Source });
             return null;
         }
@@ -246,7 +247,7 @@ namespace TailOrbit
                 ? "serve --yes --tcp=" + e.Port + " off"
                 : (e.Public ? "funnel" : "serve") + " --yes " + (e.Https ? "--https=" : "--http=") + e.Port + " " + Arg("--set-path=" + e.Path) + " off";
             var r = Tailscale.Run(cmd);
-            if (r.Code != 0) return Tailscale.FirstLine(r.Err, "没停掉");
+            if (r.Code != 0) return Tailscale.FirstLine(r.Err, L.T("没停掉"));
             if (e.Mine != null) Remove(e.Mine.Slug);
             return null;
         }

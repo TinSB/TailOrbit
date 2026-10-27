@@ -349,7 +349,17 @@ namespace TailOrbit
                 beaconScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
                 beacon.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle });
             }
-            else Ui.AnimTo(beacon, UIElement.OpacityProperty, 0, 300);
+            else
+            {
+                // 淡出后把一直在跑的那组放大动画也停掉，不然空转着让界面每帧都重画
+                Ui.AnimTo(beacon, UIElement.OpacityProperty, 0, 300);
+                Ui.After(320, () =>
+                {
+                    if (receiving) return;
+                    beaconScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                    beaconScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                });
+            }
             LinkStyle();
         }
 

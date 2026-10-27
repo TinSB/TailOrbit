@@ -28,9 +28,25 @@ namespace TailOrbit
 
         public virtual void Shown() { }
         public virtual void Hidden() { }
+
+        // 窗口最小化了：各页的定时刷新先歇着，不在后台反复起 tailscale（最小化时 WPF 不发 Hidden，IsVisible 仍是 true）
+        protected bool Away
+        {
+            get { var w = Window.GetWindow(this); return w == null || w.WindowState == WindowState.Minimized; }
+        }
         public virtual bool CanTake(List<string> paths, Point p) { return false; }   // 拖着文件经过；p 相对本页
         public virtual void Take(List<string> paths, Point p) { }
         public virtual void DragEnd() { }
+
+        // 拖着经过时每动一下都会问能不能放；同一次拖动的文件列表是同一个对象，磁盘查过一遍就记住
+        List<string> checkedFor;
+        bool checkedOk;
+
+        protected bool AllExist(List<string> paths, Func<string, bool> exists)
+        {
+            if (!ReferenceEquals(paths, checkedFor)) { checkedFor = paths; checkedOk = paths.All(exists); }
+            return checkedOk;
+        }
     }
 
     static class Kit
@@ -83,7 +99,7 @@ namespace TailOrbit
         public static Border CopyRow(Theme th, TextBlock text)
         {
             var glyph = new IconView("copy", 15, th.Mute);
-            var btn = new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = glyph, ToolTip = Ui.Tip(th, "复制") };
+            var btn = new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = glyph, ToolTip = Ui.Tip(th, L.T("复制")) };
             btn.MouseEnter += delegate { btn.Background = th.Hair; };
             btn.MouseLeave += delegate { btn.Background = Brushes.Transparent; };
             int stamp = 0;
@@ -99,7 +115,7 @@ namespace TailOrbit
         }
 
         // 左边名目、右边数值的一行，上面一条细线隔开
-        public static Border InfoRow(Theme th, string key, TextBlock value)
+        public static Border InfoRow(Theme th, string key, FrameworkElement value)
         {
             var k = Text(key, 14, th.Mute);
             value.HorizontalAlignment = HorizontalAlignment.Right;
@@ -186,7 +202,9 @@ namespace TailOrbit
             for (int i = 0; i < options.Length; i++)
             {
                 var t = new TextBlock { Text = options[i], FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                var b = new Border { Height = height, Padding = new Thickness(16, 0, 16, 0), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = t };
+                // 底下垫一份看不见的粗体字：选中变粗时这段不变宽，板子滑过去的终点不会在半路被重新排版打断
+                var ghost = new TextBlock { Text = options[i], FontSize = 14, FontWeight = FontWeights.SemiBold, Visibility = Visibility.Hidden, HorizontalAlignment = HorizontalAlignment.Center };
+                var b = new Border { Height = height, Padding = new Thickness(16, 0, 16, 0), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = new Grid { Children = { ghost, t } } };
                 if (inChrome) WindowChrome.SetIsHitTestVisibleInChrome(b, true);
                 int k = i;
                 b.MouseEnter += delegate { if (k != Index) t.Foreground = th.Fg; };

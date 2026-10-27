@@ -1,6 +1,7 @@
 // 分享用的小文件服务：只听本机 127.0.0.1:46213，Tailscale 把 https://<本机>:7443/s/<随机码>/… 转发成 /<随机码>/…。
 // 只认登记过的随机码；路径里有 ..、反斜杠、冒号的一律不给；隐藏文件和点开头的文件不给；
-// 从 Funnel（互联网）进来的请求只给已经公开、还没到点的分享。TailOrbit 没在跑时链接打不开，文件也就不会被拿走
+// 从 Funnel（互联网）进来的请求只给已经公开、还没到点的分享。TailOrbit 没在跑时链接打不开，文件也就不会被拿走。
+// /c/<随机码>/ 是剪贴板互通（ClipShare.cs），整条交给它
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -18,9 +19,10 @@ namespace TailOrbit
         public const int Port = 46213;
         static TcpListener listener;
         static string error = "分享服务没开";
+        [ThreadStatic] static string visitor;   // 这次请求的访客用什么语言（按浏览器的 Accept-Language），网页上的字按它翻译
 
         // null 表示在跑；否则是开不起来的原因
-        public static string Error { get { return error; } }
+        public static string Error { get { return error == null ? null : error.Contains("{0}") ? L.T(error, Port) : L.T(error); } }
 
         public static void Start()
         {
@@ -34,7 +36,7 @@ namespace TailOrbit
             }
             catch (SocketException)
             {
-                error = "本机 " + Port + " 端口被别的程序占着，分享服务开不起来";
+                error = "本机 {0} 端口被别的程序占着，分享服务开不起来";
                 return;
             }
             new Thread(Accept) { IsBackground = true, Name = "TailOrbit 分享服务" }.Start();
@@ -60,8 +62,9 @@ namespace TailOrbit
                 {
                     c.ReceiveTimeout = 15000;
                     var s = c.GetStream();
-                    string head = ReadHead(s);
-                    if (head != null) Handle(s, head);
+                    byte[] rest;
+                    string head = ReadHead(s, out rest);
+                    if (head != null) Handle(s, head, rest);
                 }
             }
             catch (IOException) { }               // 对方中途断开、下载到一半取消
@@ -70,9 +73,10 @@ namespace TailOrbit
             catch (Exception e) { Log.Write(e); }
         }
 
-        // 请求头：读到空行为止，最多 16KB
-        static string ReadHead(Stream s)
+        // 请求头：读到空行为止，最多 16KB；rest 是顺带读进来的正文开头
+        static string ReadHead(Stream s, out byte[] rest)
         {
+            rest = null;
             var buf = new byte[16384];
             int n = 0;
             while (n < buf.Length)
@@ -80,25 +84,33 @@ namespace TailOrbit
                 int k = s.Read(buf, n, buf.Length - n);
                 if (k <= 0) return null;
                 for (int i = Math.Max(0, n - 3); i + 3 < n + k; i++)
-                    if (buf[i] == 13 && buf[i + 1] == 10 && buf[i + 2] == 13 && buf[i + 3] == 10) return Encoding.UTF8.GetString(buf, 0, i);
+                    if (buf[i] == 13 && buf[i + 1] == 10 && buf[i + 2] == 13 && buf[i + 3] == 10)
+                    {
+                        rest = new byte[n + k - i - 4];
+                        Buffer.BlockCopy(buf, i + 4, rest, 0, rest.Length);
+                        return Encoding.UTF8.GetString(buf, 0, i);
+                    }
                 n += k;
             }
             return null;
         }
 
-        static void Handle(Stream s, string head)
+        static void Handle(Stream s, string head, byte[] early)
         {
             var lines = head.Split(new[] { "\r\n" }, StringSplitOptions.None);
             var first = lines[0].Split(' ');
             if (first.Length != 3) { Reply(s, 400, false); return; }
-            bool headOnly = first[0] == "HEAD";
-            if (first[0] != "GET" && !headOnly) { Reply(s, 405, false); return; }
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in lines.Skip(1))
             {
                 int colon = line.IndexOf(':');
                 if (colon > 0) headers[line.Substring(0, colon).Trim()] = line.Substring(colon + 1).Trim();
             }
+            string accept;
+            visitor = L.FromCulture(headers.TryGetValue("Accept-Language", out accept) ? accept : "");
+            if (first[1].StartsWith("/c/")) { ClipShare.Serve(s, first[0], first[1], headers, early); return; }
+            bool headOnly = first[0] == "HEAD";
+            if (first[0] != "GET" && !headOnly) { Reply(s, 405, false); return; }
             var parts = Segments(first[1]);
             var share = parts == null || parts[0] == "" ? null : Shares.Find(parts[0]);
             if (share == null || share.Source == "") { Reply(s, 404, headOnly); return; }
@@ -227,22 +239,23 @@ namespace TailOrbit
             return 1;
         }
 
-        static void Head(Stream s, int code, string type, long length, string extra)
+        // cache：剪贴板的内容用 no-store，浏览器连缓存都别留
+        public static void Head(Stream s, int code, string type, long length, string extra, string cache = "no-cache")
         {
             string h = "HTTP/1.1 " + code + " " + Reason(code) + "\r\nContent-Type: " + type + "\r\nContent-Length: " + length + "\r\n" + extra +
-                "Cache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n";
+                "Cache-Control: " + cache + "\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n";
             var b = Encoding.UTF8.GetBytes(h);
             s.Write(b, 0, b.Length);
         }
 
         static void Reply(Stream s, int code, bool headOnly)
         {
-            var body = Encoding.UTF8.GetBytes(Page(code == 404 ? "找不到" : "打不开", code == 404 ? "这个分享已经关了，或者文件不在了。" : "请求不对。", ""));
+            var body = Encoding.UTF8.GetBytes(Page(code == 404 ? Say("找不到") : Say("打不开"), code == 404 ? Say("这个分享已经关了，或者文件不在了。") : Say("请求不对。"), ""));
             Head(s, code, "text/html; charset=utf-8", body.Length, "");
             if (!headOnly) s.Write(body, 0, body.Length);
         }
 
-        static void Redirect(Stream s, string to)
+        public static void Redirect(Stream s, string to)
         {
             Head(s, 302, "text/plain; charset=utf-8", 0, "Location: " + to + "\r\n");
         }
@@ -252,11 +265,16 @@ namespace TailOrbit
             switch (code)
             {
                 case 200: return "OK";
+                case 204: return "No Content";
                 case 206: return "Partial Content";
                 case 302: return "Found";
                 case 400: return "Bad Request";
+                case 403: return "Forbidden";
                 case 405: return "Method Not Allowed";
+                case 411: return "Length Required";
+                case 413: return "Payload Too Large";
                 case 416: return "Range Not Satisfiable";
+                case 503: return "Service Unavailable";
                 default: return "Not Found";
             }
         }
@@ -265,7 +283,7 @@ namespace TailOrbit
         static void Listing(Stream s, string dir, string title, bool sub, bool headOnly)
         {
             var rows = new StringBuilder();
-            if (sub) rows.Append(Row("../", "上一级", "", Icon("M9,14 L4,9 L9,4 M4,9 H14 A6,6 0 0 1 20,15 V20")));
+            if (sub) rows.Append(Row("../", Say("上一级"), "", Icon(Icons.Data("up"))));
             List<FileSystemInfo> items;
             try { items = new DirectoryInfo(dir).EnumerateFileSystemInfos().Where(x => !x.Name.StartsWith(".") && (x.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0).ToList(); }
             catch (IOException) { items = new List<FileSystemInfo>(); }
@@ -275,7 +293,7 @@ namespace TailOrbit
                 rows.Append(Row(Uri.EscapeDataString(d.Name) + "/", d.Name, d.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), Icon(Icons.Data("folder"))));
             foreach (var f in items.OfType<FileInfo>().OrderBy(x => x.Name, cmp))
                 rows.Append(Row(Uri.EscapeDataString(f.Name), f.Name, Ui.FormatSize(f.Length) + " · " + f.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), Icon(Icons.Data("file"))));
-            if (items.Count == 0) rows.Append("<p class=\"empty\">这个文件夹是空的</p>");
+            if (items.Count == 0) rows.Append("<p class=\"empty\">" + WebUtility.HtmlEncode(Say("这个文件夹是空的")) + "</p>");
             var body = Encoding.UTF8.GetBytes(Page(title, null, rows.ToString()));
             Head(s, 200, "text/html; charset=utf-8", body.Length, "");
             if (!headOnly) s.Write(body, 0, body.Length);
@@ -286,15 +304,21 @@ namespace TailOrbit
             return "<a class=\"row\" href=\"" + WebUtility.HtmlEncode(href) + "\">" + icon + "<span class=\"n\">" + WebUtility.HtmlEncode(name) + "</span><span class=\"m\">" + meta + "</span></a>";
         }
 
-        static string Icon(string d)
+        static string Icon(string[] paths)
         {
-            return "<svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" aria-hidden=\"true\"><path d=\"" + d + "\"/></svg>";
+            return "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" aria-hidden=\"true\">" + string.Concat(paths.Select(d => "<path d=\"" + d + "\"/>")) + "</svg>";
+        }
+
+        // 按这次访客的语言
+        public static string Say(string zh, params object[] args)
+        {
+            return L.For(visitor ?? "en", zh, args);
         }
 
         // 给打开链接的人看的页面：跟着系统深浅色走，手机上也好点
-        static string Page(string title, string text, string rows)
+        public static string Page(string title, string text, string rows)
         {
-            return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+            return "<!doctype html><html lang=\"" + (visitor ?? "en") + "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
                 "<title>" + WebUtility.HtmlEncode(title) + "</title><style>" +
                 ":root{--bg:#E6E8EB;--fg:#1A1C1F;--mute:#5B6169;--tile:#F4F5F6;--hair:rgba(26,28,31,.12)}" +
                 "@media (prefers-color-scheme:dark){:root{--bg:#1A1C1F;--fg:#E7E9EC;--mute:#8C929A;--tile:#24272B;--hair:rgba(231,233,236,.1)}}" +
@@ -302,7 +326,7 @@ namespace TailOrbit
                 "main{max-width:760px;margin:0 auto;padding:32px 16px 48px}h1{font-size:22px;font-weight:600;margin:0 0 18px;word-break:break-all}" +
                 "a.row{display:flex;align-items:center;gap:14px;padding:13px 16px;margin-bottom:6px;border-radius:12px;background:var(--tile);color:inherit;text-decoration:none}" +
                 "a.row:hover{box-shadow:inset 0 0 0 1px var(--hair)}.n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
-                ".m{color:var(--mute);font-size:13px;white-space:nowrap}svg{flex:0 0 20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}" +
+                ".m{color:var(--mute);font-size:13px;white-space:nowrap}svg{flex:0 0 20px;fill:currentColor}" +
                 "p{color:var(--mute)}.empty{padding:20px 4px}</style></head><body><main><h1>" + WebUtility.HtmlEncode(title) + "</h1>" +
                 (text != null ? "<p>" + WebUtility.HtmlEncode(text) + "</p>" : "") + rows + "</main></body></html>";
         }

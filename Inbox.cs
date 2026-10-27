@@ -282,29 +282,47 @@ namespace TailOrbit
                 if (!s.Online && (!known || was)) since[s.Key] = s.LastSeen.Year > 2000 ? s.LastSeen : DateTime.Now;
                 online[s.Key] = s.Online;
                 if (!known || was == s.Online || woke) continue;
-                if (!s.Online) notify(s.Name + " 离线了", "恢复的时候再告诉你");
+                if (!s.Online) notify(L.T("{0} 离线了", s.Name), L.T("恢复的时候再告诉你"));
                 else
                 {
                     DateTime t;
-                    notify(s.Name + " 恢复在线", since.TryGetValue(s.Key, out t) ? "离线了 " + Span(DateTime.Now - t) : "");
+                    notify(L.T("{0} 恢复在线", s.Name), since.TryGetValue(s.Key, out t) ? L.T("离线了 {0}", Span(DateTime.Now - t)) : "");
                 }
             }
         }
 
         static string Span(TimeSpan t)
         {
-            if (t.TotalMinutes < 1) return "不到 1 分钟";
-            if (t.TotalHours < 1) return (int)t.TotalMinutes + " 分钟";
-            if (t.TotalDays < 2) return (int)t.TotalHours + " 小时" + (t.Minutes > 0 ? " " + t.Minutes + " 分钟" : "");
-            return (int)t.TotalDays + " 天";
+            if (t.TotalMinutes < 1) return L.T("不到 1 分钟");
+            if (t.TotalHours < 1) return L.T("{0} 分钟", (int)t.TotalMinutes);
+            if (t.TotalDays < 2) return t.Minutes > 0 ? L.T("{0} 小时 {1} 分钟", (int)t.TotalHours, t.Minutes) : L.T("{0} 小时", (int)t.TotalHours);
+            return L.T("{0} 天", (int)t.TotalDays);
         }
     }
 
-    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。现在只有要掉线提醒的设备
+    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、剪贴板互通
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
-        static readonly HashSet<string> watch = Load();
+        static readonly HashSet<string> watch = new HashSet<string>();
+        static string language = "auto", clipKey = "";
+        static bool clipOn;
+
+        static Settings()
+        {
+            if (!File.Exists(FilePath)) return;
+            try
+            {
+                var o = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(FilePath, Encoding.UTF8)) as Dictionary<string, object>;
+                var list = Tailscale.Get(o, "watch") as object[];
+                if (list != null) foreach (var s in list.OfType<string>()) watch.Add(s);
+                language = (Tailscale.Get(o, "lang") as string) ?? "auto";
+                clipOn = true.Equals(Tailscale.Get(o, "clip"));
+                clipKey = (Tailscale.Get(o, "clipKey") as string) ?? "";
+            }
+            catch (ArgumentException e) { Log.Write(e); }   // 文件坏了：当成没设置过，下次保存时覆盖
+            catch (IOException e) { Log.Write(e); }
+        }
 
         // 按 Tailscale 的设备 ID 记（换了 IP 也认得）；没有 ID 时用 IP
         public static string Key(Device d)
@@ -323,19 +341,32 @@ namespace TailOrbit
             Save();
         }
 
-        static HashSet<string> Load()
+        // "auto" 跟着系统，或者 L.Codes 里的一个
+        public static string Language
         {
-            var set = new HashSet<string>();
-            if (!File.Exists(FilePath)) return set;
-            try
+            get { return language; }
+            set { language = value; Save(); }
+        }
+
+        public static bool ClipOn
+        {
+            get { return clipOn; }
+            set { clipOn = value; Save(); }
+        }
+
+        // 剪贴板网址里的随机码：第一次用时生成，关了再开不变（手机上的书签、快捷指令照样能用）
+        public static string ClipKey
+        {
+            get
             {
-                var o = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(FilePath, Encoding.UTF8)) as Dictionary<string, object>;
-                var list = Tailscale.Get(o, "watch") as object[];
-                if (list != null) foreach (var s in list.OfType<string>()) set.Add(s);
+                if (clipKey != "") return clipKey;
+                const string chars = "abcdefghjkmnpqrstuvwxyz23456789";
+                var bytes = new byte[20];
+                using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+                clipKey = new string(bytes.Select(b => chars[b % chars.Length]).ToArray());
+                Save();
+                return clipKey;
             }
-            catch (ArgumentException e) { Log.Write(e); }   // 文件坏了：当成没设置过，下次保存时覆盖
-            catch (IOException e) { Log.Write(e); }
-            return set;
         }
 
         // 先写临时文件再换过去，写到一半断电也不会留下半个文件
@@ -345,7 +376,8 @@ namespace TailOrbit
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FilePath));
                 string temp = FilePath + ".tmp";
-                File.WriteAllText(temp, new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "watch", watch.ToList() } }), new UTF8Encoding(false));
+                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "clip", clipOn }, { "clipKey", clipKey } };
+                File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));
                 if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
                 else File.Move(temp, FilePath);
             }
