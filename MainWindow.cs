@@ -153,6 +153,7 @@ namespace TailOrbit
             root.Children.Add(home);
             absent = new Grid { Background = th.Bg, Visibility = Visibility.Collapsed, Children = { TailscaleSetup.View(th, Installed) } };
             root.Children.Add(absent);   // 各页第一次建时插在星网后面，都压在它下面
+            root.Children.Add(Brand());
             root.Children.Add(TitleBar());
             root.Children.Add(Tabs());
             root.Children.Add(overlay);
@@ -1238,6 +1239,18 @@ namespace TailOrbit
         }
 
         // ---------- 右上：窗口按钮 ----------
+
+        // 左上：程序图标和名字，和中间的页签齐平；不接鼠标，按住这里照样能拖窗口
+        FrameworkElement Brand()
+        {
+            var icon = new Image { Width = 20, Height = 20, VerticalAlignment = VerticalAlignment.Center };
+            RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
+            Action pick = () => icon.Source = Ui.IconFrame(20 * VisualTreeHelper.GetDpi(this).DpiScaleX);   // 按屏幕缩放取最贴近的那一帧，小图才清楚
+            Loaded += delegate { pick(); };
+            DpiChanged += delegate { pick(); };
+            var name = new TextBlock { Text = "TailOrbit", FontFamily = Ui.DisplayFont, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = th.Fg, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 0, 0) };
+            return new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Height = 38, Margin = new Thickness(18, 7, 0, 0), IsHitTestVisible = false, Children = { icon, name } };   // 和页签同一个框（上边距 7、高 32＋上下各 3 的内边距）
+        }
 
         FrameworkElement TitleBar()
         {
