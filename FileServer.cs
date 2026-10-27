@@ -24,14 +24,24 @@ namespace TailOrbit
         // null 表示在跑；否则是开不起来的原因
         public static string Error { get { return error == null ? null : error.Contains("{0}") ? L.T(error, Port) : L.T(error); } }
 
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool SetHandleInformation(IntPtr handle, int mask, int flags);
+
+        // 只听本机的端口。先关掉“子进程继承”：不然 ssh、tailscale 这些子进程会带走一份句柄，
+        // 程序被关掉后它们还活着，端口就一直被占着，下次启动开不起来（10-27 分享服务就这样没开起来）
+        public static TcpListener Listen(int port)
+        {
+            var l = new TcpListener(IPAddress.Loopback, port);
+            SetHandleInformation(l.Server.Handle, 1, 0);   // HANDLE_FLAG_INHERIT
+            l.Start();
+            return l;
+        }
+
         public static void Start()
         {
             if (listener != null) return;
             try
             {
-                var l = new TcpListener(IPAddress.Loopback, Port);
-                l.Start();
-                listener = l;
+                listener = Listen(Port);
                 error = null;
             }
             catch (SocketException)
@@ -74,7 +84,7 @@ namespace TailOrbit
         }
 
         // 请求头：读到空行为止，最多 16KB；rest 是顺带读进来的正文开头
-        static string ReadHead(Stream s, out byte[] rest)
+        public static string ReadHead(Stream s, out byte[] rest)
         {
             rest = null;
             var buf = new byte[16384];
@@ -95,17 +105,25 @@ namespace TailOrbit
             return null;
         }
 
-        static void Handle(Stream s, string head, byte[] early)
+        // 请求行拆成 方法、路径、版本；不是三段时返回 null
+        public static string[] Parse(string head, out Dictionary<string, string> headers)
         {
             var lines = head.Split(new[] { "\r\n" }, StringSplitOptions.None);
-            var first = lines[0].Split(' ');
-            if (first.Length != 3) { Reply(s, 400, false); return; }
-            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in lines.Skip(1))
             {
                 int colon = line.IndexOf(':');
                 if (colon > 0) headers[line.Substring(0, colon).Trim()] = line.Substring(colon + 1).Trim();
             }
+            var first = lines[0].Split(' ');
+            return first.Length == 3 ? first : null;
+        }
+
+        static void Handle(Stream s, string head, byte[] early)
+        {
+            Dictionary<string, string> headers;
+            var first = Parse(head, out headers);
+            if (first == null) { Reply(s, 400, false); return; }
             string accept;
             visitor = L.FromCulture(headers.TryGetValue("Accept-Language", out accept) ? accept : "");
             if (first[1].StartsWith("/c/")) { ClipShare.Serve(s, first[0], first[1], headers, early); return; }
@@ -265,12 +283,15 @@ namespace TailOrbit
             switch (code)
             {
                 case 200: return "OK";
+                case 202: return "Accepted";
                 case 204: return "No Content";
                 case 206: return "Partial Content";
                 case 302: return "Found";
                 case 400: return "Bad Request";
+                case 401: return "Unauthorized";
                 case 403: return "Forbidden";
                 case 405: return "Method Not Allowed";
+                case 409: return "Conflict";
                 case 411: return "Length Required";
                 case 413: return "Payload Too Large";
                 case 416: return "Range Not Satisfiable";

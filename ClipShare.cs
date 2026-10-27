@@ -210,7 +210,7 @@ namespace TailOrbit
         {
             Application.Current.Dispatcher.BeginInvoke(new Action(() =>
             {
-                host.Notify(title, text);
+                host.Notify(title, text, true);
                 host.ClipFlow(ip, inward);
             }));
         }
@@ -283,7 +283,7 @@ namespace TailOrbit
             if (why == null && text == "") why = L.T("{0} 的剪贴板里没有文字", mac.Name);
             if (why == null && !Ui.CopyText(Windows(text))) why = L.T("剪贴板被占用，再试一次");
             if (why != null) { host.Notify(L.T("没读到 {0} 的剪贴板", mac.Name), why); return; }
-            host.Notify(L.T("读到了 {0} 的剪贴板", mac.Name), L.T("{0} 个字，可以直接粘贴", text.Length));
+            host.Notify(L.T("读到了 {0} 的剪贴板", mac.Name), L.T("{0} 个字，可以直接粘贴", text.Length), true);
             host.ClipFlow(mac.Ip, true);
         }
 

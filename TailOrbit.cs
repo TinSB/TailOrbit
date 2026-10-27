@@ -6,6 +6,7 @@
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
 // 托盘菜单（TrayMenu.cs）：右键托盘图标，打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
+// 环礁接口（Island.cs）：给屏幕顶上的通知岛用的本机接口——设备列表、发文件、收发进度和剪贴板动静；岛连着时不弹托盘通知。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
 using System;
@@ -414,10 +415,19 @@ namespace TailOrbit
         public const double Unknown = -1, Keep = -2;   // 进度值：不知道进度 / 只改文字
         static readonly Regex LogPrefix = new Regex(@"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(\.\d+)? ");
 
+        static int count;
+
+        public readonly int Id = Interlocked.Increment(ref count);
         public Device Target;
         public List<string> Paths;
         public Action<double, string> Progress;
         public long TotalBytes;
+        // 给环礁看的：preparing 打包中 / sending / retrying 对方没回应、还在重试 / done / failed / canceled；Fraction 不知道进度时是 -1
+        public string State = "preparing", Error = "";
+        public double Fraction = Unknown;
+        public static event Action<SendJob> Changed;   // 在发送的后台线程上触发
+        readonly object sync = new object();
+        bool ended;
         volatile bool canceled;
         Process cp, watch;
 
@@ -437,6 +447,38 @@ namespace TailOrbit
         // 返回 null 表示发送成功，"" 表示取消了，其他是失败原因
         public string Run()
         {
+            string result = "发送失败";   // 漏出异常时也按失败报给环礁
+            try { return result = Deliver(); }
+            finally
+            {
+                Error = string.IsNullOrEmpty(result) ? "" : result;
+                Set(result == null ? 1 : Keep, result == null ? "done" : result == "" ? "canceled" : "failed", true);
+            }
+        }
+
+        // 进度和文字给界面，状态顺手报给环礁
+        void Report(double f, string text, string state)
+        {
+            Progress(f, text);
+            Set(f, state, false);
+        }
+
+        // 结束（done、failed、canceled）以后，迟到的进度不再报
+        void Set(double f, string state, bool end)
+        {
+            lock (sync)
+            {
+                if (ended) return;
+                ended = end;
+                State = state;
+                if (f != Keep) Fraction = f;
+                var h = Changed;
+                if (h != null) h(this);
+            }
+        }
+
+        string Deliver()
+        {
             string temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "TailOrbit", Guid.NewGuid().ToString("N"));
             try
             {
@@ -444,7 +486,7 @@ namespace TailOrbit
                 foreach (var p in Paths)
                 {
                     if (!Directory.Exists(p)) { files.Add(p); continue; }
-                    Progress(Unknown, L.T("打包中"));
+                    Report(Unknown, L.T("打包中"), "preparing");
                     Directory.CreateDirectory(temp);
                     files.Add(Zip(p, temp));
                 }
@@ -491,7 +533,7 @@ namespace TailOrbit
             {
                 double f;
                 lock (gate) f = Math.Min(1.0, (done + current) / (double)total);
-                Progress(f, (int)(f * 100) + "%");
+                Report(f, (int)(f * 100) + "%", "sending");
             };
 
             // 实时进度：订阅 Tailscale 的事件流，官方命令行画进度条用的也是它；拿不到就只按文件数走
@@ -538,7 +580,7 @@ namespace TailOrbit
             foreach (var f in files) args.Append(" \"").Append(f).Append('"');
             args.Append(' ').Append(Target.Ip).Append(':');
             string lastError = null;
-            Progress(watch == null ? Unknown : 0, watch == null ? L.T("发送中") : "0%");
+            Report(watch == null ? Unknown : 0, watch == null ? L.T("发送中") : "0%", "sending");
             cp = Process.Start(Tailscale.Psi(args.ToString()));
             cp.OutputDataReceived += (s, e) => { };
             cp.ErrorDataReceived += (s, e) =>
@@ -555,7 +597,7 @@ namespace TailOrbit
                     }
                     report();
                 }
-                else if (line.StartsWith("# warning:")) Progress(Keep, L.T("对方没回应，还在重试"));
+                else if (line.StartsWith("# warning:")) Report(Keep, L.T("对方没回应，还在重试"), "retrying");
                 else if (line.Length > 0 && !line.StartsWith("sending \"")) lastError = line;
             };
             cp.BeginOutputReadLine();
@@ -936,6 +978,7 @@ namespace TailOrbit
         TrayMenu menu;
         EventWaitHandle showSignal;
         bool sweeping;
+        readonly List<SendJob> loose = new List<SendJob>();   // 环礁上发起、没在星网上画的发送：退出时取消
         public bool HotkeyOk { get; private set; }   // Ctrl+Alt+A 注册上了：托盘菜单里给它画键帽
         public event Action Toggled;                 // 托盘菜单拨了剪贴板开关：本机页那两行跟着变
 
@@ -969,6 +1012,7 @@ namespace TailOrbit
             FileServer.Start();
             ClipShare.Start(this);
             ClipSync.Start(this);
+            Island.Start(this);
             var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             sweep.Tick += delegate { Sweep(); };
             sweep.Start();
@@ -1049,10 +1093,27 @@ namespace TailOrbit
             main.Switch(key);
         }
 
-        // 剪贴板经过了这台设备：星网上光点流一小段
+        // 剪贴板经过了这台设备：星网上光点流一小段，环礁上也亮一下
         public void ClipFlow(string ip, bool inward)
         {
             if (main != null) main.ClipFlow(ip, inward);
+            Island.Clip(ip, inward);
+        }
+
+        // 环礁上拖来的文件：主界面建好、那台设备在星网上又没在发，就照常画光点；不然在后台发。都照常记进传输记录
+        public void SendFromIsland(SendJob j)
+        {
+            if (main != null && main.Send(j)) return;
+            j.Progress = (f, text) => { };
+            loose.Add(j);
+            Task.Run(() => j.Run()).ContinueWith(t =>
+            {
+                loose.Remove(j);
+                string result = t.IsFaulted ? t.Exception.GetBaseException().Message : t.Result;
+                History.Record(j, result);
+                if (result == null) Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths), true);
+                else if (result != "") Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         IntPtr OnMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -1081,8 +1142,10 @@ namespace TailOrbit
             return IntPtr.Zero;
         }
 
-        public void Notify(string title, string text)
+        // island：这件事环礁上也看得到（收发文件、剪贴板经过），岛连着时右下角就不再弹
+        public void Notify(string title, string text, bool island = false)
         {
+            if (island && Island.Connected) return;
             tray.ShowBalloonTip(4000, title, text, WinForms.ToolTipIcon.None);
         }
 
@@ -1090,6 +1153,7 @@ namespace TailOrbit
         {
             panel.Abort();
             if (main != null) main.Abort();
+            foreach (var j in loose) j.Cancel();
             UnregisterHotKey(sink.Handle, 1);
             UnregisterHotKey(sink.Handle, 2);
             RemoveClipboardFormatListener(sink.Handle);

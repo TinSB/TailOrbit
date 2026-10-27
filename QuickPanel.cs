@@ -304,7 +304,7 @@ namespace TailOrbit
             {
                 files = new List<string>();
                 Done(r);
-                if (!IsVisible) { host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths)); return; }
+                if (!IsVisible) { host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths), true); return; }
                 int v = version;
                 Ui.After(1100, () => { if (v == version) HidePanel(); });
             }
@@ -312,7 +312,7 @@ namespace TailOrbit
             else
             {
                 Fail(r, L.T(result));
-                if (!IsVisible) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result));
+                if (!IsVisible) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
             }
         }
 

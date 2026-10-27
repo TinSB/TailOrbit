@@ -939,7 +939,20 @@ namespace TailOrbit
         void Send(Node n, List<string> paths)
         {
             if (n.Busy || !n.Dev.Online) return;
-            var j = new SendJob { Target = n.Dev, Paths = paths };
+            Begin(n, new SendJob { Target = n.Dev, Paths = paths });
+        }
+
+        // 环礁上拖来的：那台设备在星网上、手头没在发，就照样画光点；否则返回 false
+        public bool Send(SendJob j)
+        {
+            Node n;
+            if (!nodes.TryGetValue(j.Target.Ip, out n) || n.Busy) return false;
+            Begin(n, j);
+            return true;
+        }
+
+        void Begin(Node n, SendJob j)
+        {
             n.Start(j);
             flow.Start(n);
             j.Progress = (f, text) => Dispatcher.BeginInvoke(new Action(() =>
@@ -957,8 +970,8 @@ namespace TailOrbit
             n.Finish(result);
             History.Record(j, result);
             bool away = !IsVisible || WindowState == WindowState.Minimized;
-            if (away && result == null) host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths));
-            if (away && !string.IsNullOrEmpty(result)) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result));
+            if (away && result == null) host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths), true);
+            if (away && !string.IsNullOrEmpty(result)) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
             Reload();
         }
 

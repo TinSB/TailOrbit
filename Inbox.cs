@@ -13,11 +13,14 @@ using System.Windows.Threading;
 
 namespace TailOrbit
 {
-    // 正在收的一批文件，给星网画进度用
+    // 正在收的一批文件，给星网画进度、给环礁报进度用
     class Incoming
     {
-        public double Fraction;   // 0～1；不知道总大小时 -1
-        public string From;       // 发送方的 IP；还没认出来时 null
+        public int Id;               // 这次运行里的第几批
+        public double Fraction;      // 0～1；不知道总大小时 -1
+        public string From;          // 发送方的 IP；还没认出来时 null
+        public string Name, Os;      // 发送方的名字、系统；还没认出来时 null
+        public List<string> Files;   // 收完了：文件放在哪（和传输记录里的一样）
         public bool Done, Ok;
     }
 
@@ -34,6 +37,7 @@ namespace TailOrbit
 
         class Batch
         {
+            public readonly int Id = ++count;   // 只在界面线程上建
             public readonly Dictionary<string, Part> Parts = new Dictionary<string, Part>();
             public readonly Dictionary<string, long> RxStart = new Dictionary<string, long>();   // 按 nodekey：这批开始时各设备已经发来的字节
             public DateTime Touched;
@@ -42,6 +46,7 @@ namespace TailOrbit
         }
 
         public static event Action<Incoming> Changed;   // 在界面线程上触发
+        static int count;
         static Dispatcher ui;
         static volatile int[] ports = new int[0];   // 本机的收件端口（IPv4、IPv6 各一个）
         static readonly Dictionary<string, long> rx = new Dictionary<string, long>();
@@ -178,12 +183,12 @@ namespace TailOrbit
             var s = State(b);
             s.Done = true;
             s.Ok = got.Count > 0;
-            Raise(s);
-            if (got.Count == 0) return;
+            if (got.Count == 0) { Raise(s); return; }
             // Windows 上收到的文件最后放在“下载”里
             string dl = Folders.Downloads();
-            var paths = got.Select(p => p.Final != null && p.Final.StartsWith(dl, StringComparison.OrdinalIgnoreCase) ? p.Final : System.IO.Path.Combine(dl, p.Name)).ToList();
-            History.RecordIn(b.From, paths, got.Sum(p => p.Got));
+            s.Files = got.Select(p => p.Final != null && p.Final.StartsWith(dl, StringComparison.OrdinalIgnoreCase) ? p.Final : System.IO.Path.Combine(dl, p.Name)).ToList();
+            Raise(s);
+            History.RecordIn(b.From, s.Files, got.Sum(p => p.Got));
         }
 
         static Incoming State(Batch b)
@@ -196,7 +201,8 @@ namespace TailOrbit
                 else size += p.Size;
                 got += p.Done && p.Size >= 0 ? p.Size : p.Got;
             }
-            return new Incoming { Fraction = unknown || size <= 0 ? -1 : Math.Min(1, got / (double)size), From = b.From != null ? b.From.Ip : null };
+            var d = b.From;
+            return new Incoming { Id = b.Id, Fraction = unknown || size <= 0 ? -1 : Math.Min(1, got / (double)size), From = d != null ? d.Ip : null, Name = d != null ? d.Name : null, Os = d != null ? d.Os : null };
         }
 
         static void Raise(Incoming s)
@@ -224,7 +230,7 @@ namespace TailOrbit
 
         public static void Start(Host h)
         {
-            notify = h.Notify;
+            notify = (title, text) => h.Notify(title, text);
             var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             t.Tick += delegate { Tick(); };
             t.Start();
