@@ -285,5 +285,9 @@
   "把我的剪贴板发过去": "Send my clipboard",
   "没复制成，长按上面的字自己复制": "Couldn't copy. Press and hold the text above to copy it",
   "已发过去": "Sent",
-  "没发成": "Couldn't send"
+  "没发成": "Couldn't send",
+  "和 Mac 共用剪贴板": "Sync clipboard with Mac",
+  "已连上 {0}": "Connected to {0}",
+  "等 Mac 醒来": "Waiting for the Mac to wake up",
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No Mac to connect to: the Mac must have Remote Login turned on and be in your SSH config."
 }

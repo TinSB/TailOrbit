@@ -300,13 +300,13 @@ namespace TailOrbit
         }
     }
 
-    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、剪贴板互通
+    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、剪贴板互通、和 Mac 共用剪贴板
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
         static readonly HashSet<string> watch = new HashSet<string>();
         static string language = "auto", clipKey = "";
-        static bool clipOn;
+        static bool clipOn, syncMac;
 
         static Settings()
         {
@@ -319,6 +319,7 @@ namespace TailOrbit
                 language = (Tailscale.Get(o, "lang") as string) ?? "auto";
                 clipOn = true.Equals(Tailscale.Get(o, "clip"));
                 clipKey = (Tailscale.Get(o, "clipKey") as string) ?? "";
+                syncMac = true.Equals(Tailscale.Get(o, "syncMac"));
             }
             catch (ArgumentException e) { Log.Write(e); }   // 文件坏了：当成没设置过，下次保存时覆盖
             catch (IOException e) { Log.Write(e); }
@@ -354,6 +355,12 @@ namespace TailOrbit
             set { clipOn = value; Save(); }
         }
 
+        public static bool SyncMac
+        {
+            get { return syncMac; }
+            set { syncMac = value; Save(); }
+        }
+
         // 剪贴板网址里的随机码：第一次用时生成，关了再开不变（手机上的书签、快捷指令照样能用）
         public static string ClipKey
         {
@@ -376,7 +383,7 @@ namespace TailOrbit
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FilePath));
                 string temp = FilePath + ".tmp";
-                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "clip", clipOn }, { "clipKey", clipKey } };
+                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac } };
                 File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));
                 if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
                 else File.Move(temp, FilePath);

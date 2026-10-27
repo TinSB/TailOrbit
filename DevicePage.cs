@@ -1,4 +1,4 @@
-// 本机页：这台电脑在 Tailscale 里叫什么、地址是多少；常用开关（tailscale set）和出口节点；TailOrbit 自己的开机自启、剪贴板互通和界面语言
+// 本机页：这台电脑在 Tailscale 里叫什么、地址是多少；常用开关（tailscale set）和出口节点；TailOrbit 自己的开机自启、剪贴板互通、和 Mac 共用剪贴板和界面语言
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -88,6 +88,7 @@ namespace TailOrbit
             info.Children.Add(Kit.InfoRow(Th, L.T("版本"), version));
             info.Children.Add(AutostartRow());
             info.Children.Add(ClipRow());
+            info.Children.Add(SyncRow());
             info.Children.Add(LanguageRow());
             left.Children.Add(info);
             Grid.SetColumn(left, 0);
@@ -353,6 +354,48 @@ namespace TailOrbit
 
         Popup qrPop;   // 剪贴板二维码，和它上次收起的时间
         DateTime qrClosed;
+
+        // 和 Mac 共用剪贴板：开着时开关左边一台小电脑，连上 Mac 时亮着，Mac 睡着时暗着（悬停看连的是哪台、为什么没连上）
+        FrameworkElement SyncRow()
+        {
+            var t = new Toggle(Th, Settings.SyncMac);
+            var glyph = new IconView("laptop", 18, Th.Mute) { Margin = new Thickness(0, 0, 12, 0), Opacity = t.On ? 1 : 0 };
+            var row = Kit.InfoRow(Th, L.T("和 Mac 共用剪贴板"), new StackPanel { Orientation = Orientation.Horizontal, Children = { glyph, t } });
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
+            var shift = new TranslateTransform();
+            row.RenderTransform = shift;
+            Action show = () =>
+            {
+                string peer = ClipSync.Peer;
+                glyph.Stroke = peer != null ? Th.Fg : Th.Mute;
+                glyph.IsHitTestVisible = t.On;
+                glyph.ToolTip = Ui.Tip(Th, peer != null ? L.T("已连上 {0}", peer) : ClipSync.Problem ?? L.T("等 Mac 醒来"));
+                Ui.AnimTo(glyph, OpacityProperty, t.On ? 1 : 0, 200);
+            };
+            row.Loaded += delegate { ClipSync.Changed += show; show(); };
+            row.Unloaded += delegate { ClipSync.Changed -= show; };
+            bool busy = false;
+            row.MouseLeftButtonUp += async delegate
+            {
+                if (busy) return;
+                busy = true;
+                bool want = !t.On;
+                t.Set(want, true);
+                string why = await Task.Run(() => ClipSync.Turn(want));
+                busy = false;
+                if (why != null)
+                {
+                    t.Set(!want, true);   // 没开成：拨回原样、摇一下，悬停看原因
+                    row.ToolTip = Ui.Tip(Th, why);
+                    Ui.Shake(shift);
+                    return;
+                }
+                row.ToolTip = null;
+                show();
+            };
+            return row;
+        }
 
         // 二维码一直是浅底深点，深色主题下也扫得出来；下面是网址，可以复制了发给自己的 Mac
         void ShowQr(FrameworkElement anchor)

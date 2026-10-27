@@ -285,5 +285,9 @@
   "把我的剪贴板发过去": "Meine Zwischenablage senden",
   "没复制成，长按上面的字自己复制": "Kopieren fehlgeschlagen – Text oben gedrückt halten und selbst kopieren",
   "已发过去": "Gesendet",
-  "没发成": "Senden fehlgeschlagen"
+  "没发成": "Senden fehlgeschlagen",
+  "和 Mac 共用剪贴板": "Zwischenablage mit Mac abgleichen",
+  "已连上 {0}": "Verbunden mit {0}",
+  "等 Mac 醒来": "Wartet, bis der Mac aufwacht",
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "Kein Mac zum Verbinden: Der Mac muss „Entfernte Anmeldung“ aktiviert haben und in der SSH-Konfiguration stehen."
 }

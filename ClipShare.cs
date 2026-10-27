@@ -1,7 +1,7 @@
 // 剪贴板互通：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把它的剪贴板发过来，这台电脑读 Mac 的剪贴板。
 // 手机和 Mac 打开 https://<本机>:7443/c/<随机码>/ 这个网页（快捷指令取 …/raw），FileServer 收到后交给这里现读剪贴板答复；
 // Tailscale 只在自己的设备之间转发（serve，不走 Funnel），这里再只认登录同一个账号的设备。每次现读、不存盘；
-// 密码管理器标了“别同步”的内容、Tailscale 令牌（云盘一键开通时它会在剪贴板里）不给。
+// 都是自己的设备，密码管理器复制的密码也照样给。
 // 读 Mac：用 ~/.ssh/config 里它的别名登录过去跑 pbpaste
 using System;
 using System.Collections.Generic;
@@ -107,7 +107,7 @@ namespace TailOrbit
             string from = Visitor(status, headers, out ip);
             if (method == "POST" && tail == "raw") { Receive(s, headers, rest, from, ip); return; }
             if (method != "GET" && !head) { FileServer.Head(s, 405, "text/plain; charset=utf-8", 0, ""); return; }
-            string text = Application.Current.Dispatcher.Invoke<string>(Peek);
+            string text = Application.Current.Dispatcher.Invoke<string>(() => { bool secret; return Peek(out secret); });
             text = text == null ? "" : text.Replace("\r\n", "\n");
             byte[] body = Encoding.UTF8.GetBytes(tail == "raw" ? text : Page(status, text));
             if (tail == "raw" && text == "") { FileServer.Head(s, 204, "text/plain; charset=utf-8", 0, "", "no-store"); return; }
@@ -139,15 +139,17 @@ namespace TailOrbit
             Tell(L.T("{0} 发来了剪贴板", from), L.T("{0} 个字，可以直接粘贴", text.Length), ip, true);
         }
 
-        // 在界面线程上调：WPF 的剪贴板只能在单线程套间里用。别的程序正开着剪贴板时稍等再试；没有能给的返回 null
-        static string Peek()
+        // 在界面线程上调：WPF 的剪贴板只能在单线程套间里用。别的程序正开着剪贴板时稍等再试；没有文字返回 null。
+        // secret：密码管理器复制密码时附带了“别进剪贴板历史、别同步到云”的标记（照样给；传到别处时把这个意思带过去）
+        public static string Peek(out bool secret)
         {
+            secret = false;
             for (int i = 0; ; i++)
                 try
                 {
-                    if (!Clipboard.ContainsText() || Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing") || Off("CanUploadToCloudClipboard") || Off("CanIncludeInClipboardHistory")) return null;
-                    string t = Clipboard.GetText();
-                    return t.TrimStart().StartsWith("tskey-", StringComparison.Ordinal) ? null : t;
+                    if (!Clipboard.ContainsText()) return null;
+                    secret = Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing") || Off("CanUploadToCloudClipboard") || Off("CanIncludeInClipboardHistory");
+                    return Clipboard.GetText();
                 }
                 catch (COMException)
                 {
@@ -156,14 +158,14 @@ namespace TailOrbit
                 }
         }
 
-        // 密码管理器复制密码时附带的标记：值是 0 表示别同步到别处、别进剪贴板历史
+        // 值是 0 表示别同步到别处、别进剪贴板历史
         static bool Off(string format)
         {
             var m = Clipboard.GetData(format) as MemoryStream;
             return m != null && m.Length >= 4 && BitConverter.ToInt32(m.ToArray(), 0) == 0;
         }
 
-        static string Windows(string text)
+        public static string Windows(string text)
         {
             return text.Replace("\r\n", "\n").Replace("\n", "\r\n");
         }

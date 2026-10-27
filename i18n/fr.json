@@ -285,5 +285,9 @@
   "把我的剪贴板发过去": "Envoyer mon presse-papiers",
   "没复制成，长按上面的字自己复制": "Copie impossible. Appuyez longuement sur le texte ci-dessus pour le copier",
   "已发过去": "Envoyé",
-  "没发成": "Échec de l'envoi"
+  "没发成": "Échec de l'envoi",
+  "和 Mac 共用剪贴板": "Presse-papiers commun avec le Mac",
+  "已连上 {0}": "Connecté à {0}",
+  "等 Mac 醒来": "En attente du réveil du Mac",
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "Aucun Mac auquel se connecter : le Mac doit avoir la Session à distance activée et figurer dans la configuration SSH."
 }

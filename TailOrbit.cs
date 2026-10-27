@@ -4,6 +4,7 @@
 // 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。开机自启、界面语言在本机页，退出在托盘菜单。
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
+// 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
 using System;
@@ -902,6 +903,8 @@ namespace TailOrbit
         [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
         [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern bool AddClipboardFormatListener(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
         public readonly Theme Theme = new Theme();
         public readonly Drawing.Icon Icon = Ui.TrayIcon();
@@ -943,6 +946,7 @@ namespace TailOrbit
                 Notify(L.T("Ctrl+Alt+A 被别的程序占用了"), L.T("从托盘图标打开主界面也能发文件。"));
             // Win+Alt+V 读 Mac 的剪贴板（Win+V 是本机的剪贴板历史）；被占了就只能从设备菜单里读
             if (RegisterHotKey(sink.Handle, 2, 0x0008 | 0x0001 | 0x4000, 0x56)) ClipShare.Hotkey = "Win+Alt+V";
+            AddClipboardFormatListener(sink.Handle);   // 本机剪贴板一变就收到通知：和 Mac 共用剪贴板
 
             // 别处再启动一次本程序（开始菜单、双击）时，把主界面拿出来
             showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
@@ -951,6 +955,7 @@ namespace TailOrbit
             // 分享出去的文件由本程序提供；公开的到点关掉（程序没开时到点的，下次启动先关）
             FileServer.Start();
             ClipShare.Start(this);
+            ClipSync.Start(this);
             var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             sweep.Tick += delegate { Sweep(); };
             sweep.Start();
@@ -1017,6 +1022,11 @@ namespace TailOrbit
 
         IntPtr OnMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (msg == 0x031D)   // WM_CLIPBOARDUPDATE：等系统发完这条通知再去读剪贴板
+            {
+                panel.Dispatcher.BeginInvoke(new Action(ClipSync.Copied));
+                return IntPtr.Zero;
+            }
             if (msg != 0x0312) return IntPtr.Zero;   // WM_HOTKEY
             if (wParam.ToInt32() == 2)
             {
@@ -1046,6 +1056,8 @@ namespace TailOrbit
             if (main != null) main.Abort();
             UnregisterHotKey(sink.Handle, 1);
             UnregisterHotKey(sink.Handle, 2);
+            RemoveClipboardFormatListener(sink.Handle);
+            ClipSync.Stop();
             tray.Visible = false;
             tray.Dispose();
             if (main != null) main.Quitting = true;

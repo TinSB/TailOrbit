@@ -285,5 +285,9 @@
   "把我的剪贴板发过去": "Enviar mi portapapeles",
   "没复制成，长按上面的字自己复制": "No se pudo copiar. Mantén pulsado el texto de arriba para copiarlo",
   "已发过去": "Enviado",
-  "没发成": "No se pudo enviar"
+  "没发成": "No se pudo enviar",
+  "和 Mac 共用剪贴板": "Sincronizar portapapeles con Mac",
+  "已连上 {0}": "Conectado a {0}",
+  "等 Mac 醒来": "Esperando a que el Mac se active",
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No hay ningún Mac al que conectarse: el Mac debe tener activada la Sesión remota y figurar en la configuración de SSH."
 }
