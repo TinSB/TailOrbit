@@ -5,6 +5,7 @@
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
+// 托盘菜单（TrayMenu.cs）：右键托盘图标，打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
 using System;
@@ -65,6 +66,9 @@ namespace TailOrbit
                 app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 // 常驻程序出了没想到的错也不能悄悄消失（消失了热键就没了），记下来接着跑
                 app.DispatcherUnhandledException += (s, e) => { Log.Write(e.Exception); e.Handled = true; };
+                // 进消息循环之前线程上还没有同步上下文，启动时就开始的后台活（清过期分享等）要靠它把结果送回界面线程。
+                // 以前是托盘的 WinForms 菜单顺手装上的，菜单换成自己画的以后要自己装
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(app.Dispatcher));
                 L.Use(Settings.Language);
                 new Host().Start(!args.Contains("--tray"));
                 app.Run();
@@ -849,6 +853,13 @@ namespace TailOrbit
             catch (COMException) { return false; }   // 别的程序正开着剪贴板
         }
 
+        // 弹出层（Placement=Bottom）里的卡片右边对齐到 anchor 右边时的横向偏移。弹出层对齐的是卡片本身，不算给阴影留的外边距；
+        // Windows 设成“惯用右手”（平板设置里那项）时，它拿卡片的右边去对齐，偏移就是 0（10-27 在 175% 缩放下两种设置都实测过）
+        public static double RightUnder(FrameworkElement anchor, double width)
+        {
+            return SystemParameters.MenuDropAlignment ? 0 : anchor.ActualWidth - width;
+        }
+
         public static ToolTip Tip(Theme th, string text)
         {
             return new ToolTip { Content = text, Background = th.Pop, Foreground = th.Fg, BorderBrush = th.Hair, BorderThickness = new Thickness(1), Padding = new Thickness(10, 6, 10, 7), FontSize = 13 };
@@ -896,6 +907,16 @@ namespace TailOrbit
             ms.Position = 0;
             return BitmapFrame.Create(ms);
         }
+
+        // 托盘菜单里的小图标：挑不小于显示像素的最小那一版，不拿 256 的大图硬缩
+        public static BitmapSource IconFrame(double px)
+        {
+            using (var s = IconStream())
+            {
+                var frames = new IconBitmapDecoder(s, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames.OrderBy(f => f.PixelWidth).ToList();
+                return frames.FirstOrDefault(f => f.PixelWidth >= px - 0.5) ?? frames.Last();
+            }
+        }
     }
 
     class Host
@@ -912,9 +933,11 @@ namespace TailOrbit
         MainWindow main;
         HwndSource sink;
         WinForms.NotifyIcon tray;
-        WinForms.ToolStripItem trayOpen, trayQuit;
+        TrayMenu menu;
         EventWaitHandle showSignal;
         bool sweeping;
+        public bool HotkeyOk { get; private set; }   // Ctrl+Alt+A 注册上了：托盘菜单里给它画键帽
+        public event Action Toggled;                 // 托盘菜单拨了剪贴板开关：本机页那两行跟着变
 
         public void Start(bool showMain)
         {
@@ -928,22 +951,12 @@ namespace TailOrbit
             sink.AddHook(OnMessage);
 
             tray = new WinForms.NotifyIcon { Icon = Icon, Text = "TailOrbit" };
-            // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
-            Action open = () =>
-            {
-                Ui.After(250, ShowMain);
-                if (main == null) main = new MainWindow(this);   // 反正要等这 250ms：先把窗口建好，到点只剩显示
-            };
-            var menu = new WinForms.ContextMenuStrip();
-            trayOpen = menu.Items.Add("", null, delegate { open(); });
-            trayQuit = menu.Items.Add("", null, delegate { Quit(); });
-            NameTray();
-            tray.ContextMenuStrip = menu;
-            tray.MouseClick += (s, e) => { if (e.Button == WinForms.MouseButtons.Left) open(); };
+            tray.MouseClick += (s, e) => { if (e.Button == WinForms.MouseButtons.Left) OpenFromTray(); };
+            tray.MouseUp += (s, e) => { if (e.Button == WinForms.MouseButtons.Right) ShowMenu(); };
             tray.Visible = true;
 
-            if (!RegisterHotKey(sink.Handle, 1, 0x0002 | 0x0001 | 0x4000, 0x41))   // Ctrl+Alt+A，按住不连发
-                Notify(L.T("Ctrl+Alt+A 被别的程序占用了"), L.T("从托盘图标打开主界面也能发文件。"));
+            HotkeyOk = RegisterHotKey(sink.Handle, 1, 0x0002 | 0x0001 | 0x4000, 0x41);   // Ctrl+Alt+A，按住不连发
+            if (!HotkeyOk) Notify(L.T("Ctrl+Alt+A 被别的程序占用了"), L.T("从托盘图标打开主界面也能发文件。"));
             // Win+Alt+V 读 Mac 的剪贴板（Win+V 是本机的剪贴板历史）；被占了就只能从设备菜单里读
             if (RegisterHotKey(sink.Handle, 2, 0x0008 | 0x0001 | 0x4000, 0x56)) ClipShare.Hotkey = "Win+Alt+V";
             AddClipboardFormatListener(sink.Handle);   // 本机剪贴板一变就收到通知：和 Mac 共用剪贴板
@@ -978,19 +991,41 @@ namespace TailOrbit
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
-        void NameTray()
+        // 右键托盘图标：每次现做一份菜单（语言、开关都是当下的）
+        void ShowMenu()
         {
-            trayOpen.Text = L.T("打开主界面");
-            trayQuit.Text = L.T("退出");
+            if (menu != null) menu.Dismiss();
+            var m = new TrayMenu(this);
+            menu = m;
+            m.Closed += delegate { if (menu == m) menu = null; };
+            m.Open();
         }
 
-        // 换界面语言：主界面原地换成新语言的一份（停在本机页、位置大小不变），快捷面板和托盘菜单也换
+        // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
+        public void OpenFromTray()
+        {
+            Ui.After(250, ShowMain);
+            if (main == null) main = new MainWindow(this);   // 反正要等这 250ms：先把窗口建好，到点只剩显示
+        }
+
+        // 托盘菜单里的“发文件”：弹出快捷面板，先点设备再选文件（同样等托盘弹窗收完）
+        public void SendFromTray()
+        {
+            Ui.After(250, () => panel.ShowFor(new List<string>()));
+        }
+
+        public void RaiseToggled()
+        {
+            var h = Toggled;
+            if (h != null) h();
+        }
+
+        // 换界面语言：主界面原地换成新语言的一份（停在本机页、位置大小不变），快捷面板也换；托盘菜单每次现做，不用管
         public void SetLanguage(string setting)
         {
             if ((main != null && main.Busy) || panel.Busy) { Notify(L.T("先不换语言"), L.T("有文件正在发送，发完再换。")); return; }
             Settings.Language = setting;
             L.Use(setting);
-            NameTray();
             panel.Close();   // 上面已经挡掉了正在发送的情况：快捷面板总能换成新语言的一份
             panel = new QuickPanel(this);
             if (main == null) return;
@@ -1028,6 +1063,7 @@ namespace TailOrbit
                 return IntPtr.Zero;
             }
             if (msg != 0x0312) return IntPtr.Zero;   // WM_HOTKEY
+            if (menu != null) menu.Dismiss();
             if (wParam.ToInt32() == 2)
             {
                 handled = true;

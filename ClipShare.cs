@@ -148,7 +148,7 @@ namespace TailOrbit
                 try
                 {
                     if (!Clipboard.ContainsText()) return null;
-                    secret = Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing") || Off("CanUploadToCloudClipboard") || Off("CanIncludeInClipboardHistory");
+                    secret = Secret();
                     return Clipboard.GetText();
                 }
                 catch (COMException)
@@ -156,6 +156,12 @@ namespace TailOrbit
                     if (i == 4) return null;
                     Thread.Sleep(30);
                 }
+        }
+
+        // 剪贴板里有“别进剪贴板历史、别同步到云”的标记（密码管理器复制时会带；图片也看它）
+        public static bool Secret()
+        {
+            return Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing") || Off("CanUploadToCloudClipboard") || Off("CanIncludeInClipboardHistory");
         }
 
         // 值是 0 表示别同步到别处、别进剪贴板历史

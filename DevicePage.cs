@@ -349,6 +349,18 @@ namespace TailOrbit
                 Ui.ScaleTo(scale, want ? 1 : 0, want ? 420 : 200, want ? Ui.Spring : Ui.Ease);
                 if (want) ShowQr(row);
             };
+            // 在托盘菜单里拨过：开关和二维码按钮跟着变
+            Action sync = () =>
+            {
+                bool on = Settings.ClipOn;
+                if (busy || t.On == on) return;
+                t.Set(on, true);
+                row.ToolTip = null;
+                qr.IsHitTestVisible = on;
+                Ui.ScaleTo(scale, on ? 1 : 0, on ? 420 : 200, on ? Ui.Spring : Ui.Ease);
+            };
+            row.Loaded += delegate { Host.Toggled += sync; };
+            row.Unloaded += delegate { Host.Toggled -= sync; };
             return row;
         }
 
@@ -373,9 +385,17 @@ namespace TailOrbit
                 glyph.ToolTip = Ui.Tip(Th, peer != null ? L.T("已连上 {0}", peer) : ClipSync.Problem ?? L.T("等 Mac 醒来"));
                 Ui.AnimTo(glyph, OpacityProperty, t.On ? 1 : 0, 200);
             };
-            row.Loaded += delegate { ClipSync.Changed += show; show(); };
-            row.Unloaded += delegate { ClipSync.Changed -= show; };
             bool busy = false;
+            // 在托盘菜单里拨过：开关跟着变
+            Action sync = () =>
+            {
+                if (busy || t.On == Settings.SyncMac) return;
+                t.Set(Settings.SyncMac, true);
+                row.ToolTip = null;
+                show();
+            };
+            row.Loaded += delegate { ClipSync.Changed += show; Host.Toggled += sync; show(); };
+            row.Unloaded += delegate { ClipSync.Changed -= show; Host.Toggled -= sync; };
             row.MouseLeftButtonUp += async delegate
             {
                 if (busy) return;
@@ -404,7 +424,7 @@ namespace TailOrbit
             var m = url == null ? null : Qr.Encode(url);
             if (m == null) return;
             const double width = 264, pad = 16;   // pad：给阴影留的边
-            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = anchor.ActualWidth - width - pad, VerticalOffset = 4 - pad };
+            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = Ui.RightUnder(anchor, width), VerticalOffset = 4 };
             qrPop = popup;
             popup.Closed += delegate { qrClosed = DateTime.Now; };
             var tile = new Border { Width = 212, Height = 212, Padding = new Thickness(17), CornerRadius = new CornerRadius(14), Background = SharePage.QrPaper, Child = new QrView(m, SharePage.QrInk) };
@@ -451,7 +471,7 @@ namespace TailOrbit
         void Languages(FrameworkElement anchor)
         {
             const double width = 210, pad = 16;   // pad：给阴影留的边
-            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = anchor.ActualWidth - width - pad, VerticalOffset = 4 - pad };
+            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = Ui.RightUnder(anchor, width), VerticalOffset = 4 };
             langs = popup;
             popup.Closed += delegate { langsClosed = DateTime.Now; };
             var list = new StackPanel();

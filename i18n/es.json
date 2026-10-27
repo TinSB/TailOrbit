@@ -289,5 +289,9 @@
   "和 Mac 共用剪贴板": "Sincronizar portapapeles con Mac",
   "已连上 {0}": "Conectado a {0}",
   "等 Mac 醒来": "Esperando a que el Mac se active",
-  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No hay ningún Mac al que conectarse: el Mac debe tener activada la Sesión remota y figurar en la configuración de SSH."
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No hay ningún Mac al que conectarse: el Mac debe tener activada la Sesión remota y figurar en la configuración de SSH.",
+  "收到的文件": "Archivos recibidos",
+  "没有能开终端的设备": "No hay dispositivos donde abrir una terminal",
+  "图片太大，没有同步": "Imagen demasiado grande, no se sincronizó",
+  "这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。": "Esta imagen ocupa {0:0.#} MB (límite: {1} MB). Usa «Enviar archivo»."
 }

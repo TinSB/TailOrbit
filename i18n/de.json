@@ -289,5 +289,9 @@
   "和 Mac 共用剪贴板": "Zwischenablage mit Mac abgleichen",
   "已连上 {0}": "Verbunden mit {0}",
   "等 Mac 醒来": "Wartet, bis der Mac aufwacht",
-  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "Kein Mac zum Verbinden: Der Mac muss „Entfernte Anmeldung“ aktiviert haben und in der SSH-Konfiguration stehen."
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "Kein Mac zum Verbinden: Der Mac muss „Entfernte Anmeldung“ aktiviert haben und in der SSH-Konfiguration stehen.",
+  "收到的文件": "Empfangene Dateien",
+  "没有能开终端的设备": "Keine Geräte für ein Terminal",
+  "图片太大，没有同步": "Bild zu groß, nicht abgeglichen",
+  "这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。": "Dieses Bild hat {0:0.#} MB (Grenze: {1} MB). Mit „Dateien senden“ verschicken."
 }

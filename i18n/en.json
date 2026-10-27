@@ -289,5 +289,9 @@
   "和 Mac 共用剪贴板": "Sync clipboard with Mac",
   "已连上 {0}": "Connected to {0}",
   "等 Mac 醒来": "Waiting for the Mac to wake up",
-  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No Mac to connect to: the Mac must have Remote Login turned on and be in your SSH config."
+  "没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。": "No Mac to connect to: the Mac must have Remote Login turned on and be in your SSH config.",
+  "收到的文件": "Received files",
+  "没有能开终端的设备": "No devices to open a terminal on",
+  "图片太大，没有同步": "Image too large to sync",
+  "这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。": "This one is {0:0.#} MB (the limit is {1} MB). Use Send files instead."
 }
