@@ -1,6 +1,7 @@
 // 主界面「星网」：本机在正中，设备按连接方式排在三圈上——内圈直连、中圈经中继、外圈离线。
-// 把文件拖到设备上就发；点设备挑文件，发送中再点是取消；点名字复制 IP；点中间的本机打开收到的文件。
-// 左下是最近发过的文件（点一下在文件夹里显示，拖到设备上再发一次），右下提示快捷面板的热键；关窗只是收到托盘。
+// 把文件拖到设备上就发；点设备弹出一圈按钮（终端、网页、发文件、复制域名、掉线提醒），发送中再点是取消；点名字复制 IP；
+// 别的设备发来文件时，光点从那台设备流进本机、本机上走进度；点中间的本机打开收到的文件。
+// 左下是最近发过和收到的文件（点一下在文件夹里显示，拖到设备上再发一次），右下提示快捷面板的热键；关窗只是收到托盘。
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -11,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -43,7 +45,15 @@ namespace TailOrbit
         readonly Canvas links = new Canvas { IsHitTestVisible = false };
         readonly Canvas stars = new Canvas();
         readonly Canvas overlay = new Canvas { IsHitTestVisible = false };
-        readonly FlowLayer flow;
+        readonly Canvas menuLayer = new Canvas();
+        readonly FlowLayer flow, flowIn;
+
+        // 分页：星网是首页，其余几页第一次切过去时才建
+        static readonly string[] PageKeys = { "home", "share", "net", "drive", "device" };
+        readonly Grid home = new Grid();
+        readonly Dictionary<string, FrameworkElement> pages = new Dictionary<string, FrameworkElement>();
+        Segmented tabs;
+        string current = "home";
         readonly Ellipse[] rings = new Ellipse[3];
         readonly ScaleTransform[] ringScale = { new ScaleTransform(1, 1), new ScaleTransform(1, 1), new ScaleTransform(1, 1) };
         readonly double[] radius = new double[3];
@@ -59,6 +69,23 @@ namespace TailOrbit
         TextBlock selfName, selfIp;
         Device me;
         int selfCopy;
+        // 收件：本机外圈走进度，圆盘里是百分比，收完打个勾
+        Arc selfArc;
+        TextBlock selfPct;
+        readonly Run selfPctNum = new Run("0");
+        IconView selfCheck;
+        Ellipse selfRipple;
+        readonly ScaleTransform selfRippleScale = new ScaleTransform(1, 1);
+        readonly RotateTransform selfSpin = new RotateTransform();
+        string selfState = "idle";   // idle 平时 / recv 收件中 / done 收到了
+        bool selfHovering, selfKnown, selfSpinning;
+        int selfStamp;
+        Node inFrom;   // 正往本机发文件的设备
+
+        // 点设备弹出的菜单
+        Fan fan;
+        Node pending;   // 点了、正在敲网页端口，敲完再弹
+        readonly Dictionary<string, KeyValuePair<DateTime, int>> webPorts = new Dictionary<string, KeyValuePair<DateTime, int>>();   // 按 IP：上次敲到的网页端口（0 是没有）
 
         readonly StackPanel recent = new StackPanel { Orientation = Orientation.Horizontal };
         readonly TranslateTransform recentShift = new TranslateTransform();
@@ -100,6 +127,7 @@ namespace TailOrbit
             WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 44, ResizeBorderThickness = new Thickness(6), GlassFrameThickness = new Thickness(0), CornerRadius = new CornerRadius(0), UseAeroCaptionButtons = false });
 
             flow = new FlowLayer(th.Fg, () => o);
+            flowIn = new FlowLayer(th.Fg, () => o, true);
             for (int i = 0; i < 3; i++)
             {
                 rings[i] = new Ellipse { Stroke = th.Hair, StrokeThickness = 1, StrokeDashCap = PenLineCap.Round, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = ringScale[i] };
@@ -107,35 +135,67 @@ namespace TailOrbit
             }
             field.Children.Add(links);
             field.Children.Add(flow);
+            field.Children.Add(flowIn);
             field.Children.Add(BuildSelf());
             field.Children.Add(stars);
+            field.Children.Add(menuLayer);
 
             recent.HorizontalAlignment = HorizontalAlignment.Left;
             recent.VerticalAlignment = VerticalAlignment.Bottom;
             recent.Margin = new Thickness(36, 0, 0, 30);
             recent.RenderTransform = recentShift;
 
+            home.Children.Add(field);
+            home.Children.Add(recent);
+            home.Children.Add(Keys());
+            pages["home"] = home;
             root.Background = th.Bg;
-            root.Children.Add(field);
-            root.Children.Add(recent);
-            root.Children.Add(Keys());
+            root.Children.Add(home);
             root.Children.Add(TitleBar());
+            root.Children.Add(Tabs());
             root.Children.Add(Popover());
             root.Children.Add(overlay);
             Content = root;
 
             field.SizeChanged += delegate { Layout(false); };
             History.Changed += OnHistory;
+            Inbox.Changed += OnInbox;
             refresh.Tick += delegate { if (WindowState != WindowState.Minimized) Reload(); };
-            IsVisibleChanged += delegate { if (!IsVisible) refresh.Stop(); };
-            leave.Tick += delegate { leave.Stop(); EndDrag(null); };
+            IsVisibleChanged += delegate
+            {
+                if (IsVisible) return;
+                refresh.Stop();
+                CloseFan();
+                var page = CurrentPage;
+                if (page != null) page.Hidden();
+            };
+            leave.Tick += delegate
+            {
+                leave.Stop();
+                EndDrag(null);
+                var page = CurrentPage;
+                if (page != null) page.DragEnd();
+            };
             DragEnter += OnDragOver;
             DragOver += OnDragOver;
             // 在窗口里从一个元素拖到另一个元素也会先“离开”，过一会儿还没收到拖动才算真的拖出去了（或按了 Esc）
             DragLeave += delegate { leave.Start(); };
             Drop += OnDrop;
-            PreviewMouseDown += delegate { if (popOpen && !popover.IsMouseOver && !gear.IsMouseOver) ShowPopover(false); };
-            PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && popOpen) { ShowPopover(false); e.Handled = true; } };
+            PreviewMouseDown += (s, e) =>
+            {
+                if (popOpen && !popover.IsMouseOver && !gear.IsMouseOver) ShowPopover(false);
+                // 点在菜单外面就收起；点的是菜单那台设备时交给设备自己（再点一下是收起）
+                var hit = current == "home" ? HitTest(e.GetPosition(field)) : null;
+                if (fan != null && !fan.IsMouseOver && hit != fan.Node) CloseFan();
+                if (pending != null && hit != pending) { pending.Mark(false); pending = null; }
+            };
+            PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Escape && popOpen) { ShowPopover(false); e.Handled = true; }
+                if (e.Key == Key.Escape && fan != null) { CloseFan(); e.Handled = true; }
+                // Ctrl+1～5 换页
+                if (Keyboard.Modifiers == ModifierKeys.Control && e.Key >= Key.D1 && e.Key < Key.D1 + PageKeys.Length) { Switch(PageKeys[e.Key - Key.D1]); e.Handled = true; }
+            };
             SourceInitialized += delegate
             {
                 int on = th.Dark ? 1 : 0;
@@ -156,7 +216,12 @@ namespace TailOrbit
             if (hidden) Show();
             if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
             Activate();
-            if (hidden) Intro();
+            if (hidden)
+            {
+                Intro();
+                var page = CurrentPage;
+                if (page != null) page.Shown();
+            }
             Reload();
             refresh.Start();
         }
@@ -209,26 +274,37 @@ namespace TailOrbit
             var halo = new Ellipse { Width = 124, Height = 124, Stroke = th.Hair, StrokeThickness = 1, IsHitTestVisible = false };
             Canvas.SetLeft(halo, -62);
             Canvas.SetTop(halo, -62);
+            selfArc = new Arc(th.FgColor, 62) { Opacity = 0, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = selfSpin };   // 收件进度画在这圈上
+            Canvas.SetLeft(selfArc, -68);
+            Canvas.SetTop(selfArc, -68);
+            selfRipple = new Ellipse { Width = 100, Height = 100, Stroke = th.Ok, StrokeThickness = 2, Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = selfRippleScale };
+            Canvas.SetLeft(selfRipple, -50);
+            Canvas.SetTop(selfRipple, -50);
             selfFace = new SolidColorBrush(th.FgColor);
             selfRim = new SolidColorBrush(Theme.Fade(th.DimColor, 0));
             selfInk = new SolidColorBrush(th.InkColor);
             selfIcon = new IconView("monitor", 36, selfInk);
             selfHover = new IconView("inbox", 32, selfInk);
+            selfCheck = new IconView("check", 38, selfInk, 2.4);
+            selfPct = new TextBlock { FontFamily = Ui.DisplayFont, FontSize = 25, FontWeight = FontWeights.SemiBold, Foreground = selfInk, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            selfPct.Inlines.Add(selfPctNum);
+            selfPct.Inlines.Add(new Run("%") { FontSize = 13 });
+            Typography.SetNumeralAlignment(selfPct, FontNumeralAlignment.Tabular);
             var disc = new Grid { Width = 96, Height = 96, Background = Brushes.Transparent, Cursor = Cursors.Hand, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = selfPop };
             disc.Children.Add(new Ellipse { Fill = selfFace, Stroke = selfRim, StrokeThickness = 1.5 });
-            foreach (var e in new FrameworkElement[] { selfIcon, selfHover })
+            foreach (var e in new FrameworkElement[] { selfIcon, selfHover, selfPct, selfCheck })
             {
                 e.RenderTransformOrigin = new Point(0.5, 0.5);
                 e.RenderTransform = new ScaleTransform(1, 1);
                 e.Tag = true;
+                if (e != selfIcon) Node.Swap(e, false, true);
                 disc.Children.Add(e);
             }
-            Node.Swap(selfHover, false, true);
             Canvas.SetLeft(disc, -48);
             Canvas.SetTop(disc, -48);
             // 鼠标放上去变成“收件”，点一下打开收到的文件
-            disc.MouseEnter += delegate { Node.Swap(selfIcon, false); Node.Swap(selfHover, true); };
-            disc.MouseLeave += delegate { Node.Swap(selfIcon, true); Node.Swap(selfHover, false); };
+            disc.MouseEnter += delegate { selfHovering = true; PaintSelf(); };
+            disc.MouseLeave += delegate { selfHovering = false; PaintSelf(); };
             disc.MouseLeftButtonUp += delegate
             {
                 Ui.ScaleFrom(selfPop, 0.92, 1, 360, 0, Ui.Spring);
@@ -241,9 +317,97 @@ namespace TailOrbit
             Canvas.SetTop(selfLabel, 64);
             selfLabel.Children[0].MouseLeftButtonUp += delegate { CopySelf(); };
             self.Children.Add(halo);
+            self.Children.Add(selfRipple);
+            self.Children.Add(selfArc);
             self.Children.Add(disc);
             self.Children.Add(selfLabel);
             return self;
+        }
+
+        // 圆盘里显示什么：收完是 ✓；收件中是百分比（不知道总大小时照常显示电脑）；平时鼠标放上去是“收件”
+        void PaintSelf()
+        {
+            string show = selfState == "done" ? "check" : selfState == "recv" ? (selfKnown ? "pct" : "icon") : selfHovering ? "hover" : "icon";
+            Node.Swap(selfIcon, show == "icon");
+            Node.Swap(selfHover, show == "hover");
+            Node.Swap(selfPct, show == "pct");
+            Node.Swap(selfCheck, show == "check");
+        }
+
+        // ---------- 收件 ----------
+
+        void OnInbox(Incoming s)
+        {
+            Node from = null;
+            if (s.From != null && !s.Done) nodes.TryGetValue(s.From, out from);
+            if (from != inFrom)
+            {
+                if (inFrom != null) { inFrom.Receiving(false); flowIn.Stop(inFrom, false); }
+                inFrom = from;
+                if (from != null) { from.Receiving(true); flowIn.Start(from); }
+            }
+            if (s.Done) SelfFinish(s.Ok);
+            else SelfProgress(s.Fraction);
+        }
+
+        void SelfProgress(double f)
+        {
+            if (selfState != "recv")
+            {
+                selfState = "recv";
+                selfStamp++;
+                selfArc.Brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
+                selfArc.Brush.Color = th.FgColor;
+                selfArc.BeginAnimation(Arc.ValueProperty, null);
+                selfArc.Value = 0;
+                Ui.AnimTo(selfArc, OpacityProperty, 1, 200);
+                Ui.ScaleFrom(selfPop, 0.9, 1, 460, 0, Ui.Spring);   // 一缩一弹：有东西进来了
+            }
+            selfKnown = f >= 0;
+            SelfSpin(!selfKnown);
+            if (selfKnown)
+            {
+                selfPctNum.Text = ((int)(f * 100)).ToString();
+                selfArc.BeginAnimation(Arc.ValueProperty, new DoubleAnimation(Math.Max(f, 0.004), TimeSpan.FromMilliseconds(240)));
+            }
+            PaintSelf();
+        }
+
+        // 收完：进度环合上变绿、荡开一圈、打个勾，一会儿恢复；对方取消了就直接收起
+        void SelfFinish(bool ok)
+        {
+            if (selfState != "recv") return;
+            SelfSpin(false);
+            int k = ++selfStamp;
+            if (ok)
+            {
+                selfState = "done";
+                selfArc.BeginAnimation(Arc.ValueProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(260)));
+                Ui.Tint(selfArc.Brush, th.OkColor, 300);
+                Ui.Tint(selfFace, th.OkColor, 300);
+                Ui.AnimFrom(selfRipple, OpacityProperty, 0.9, 0, 1000, 0, MainEase.Settle);
+                Ui.ScaleFrom(selfRippleScale, 1, 2.4, 1000, 0, MainEase.Settle);
+            }
+            PaintSelf();
+            Ui.After(ok ? 1500 : 1, () =>
+            {
+                if (k != selfStamp) return;
+                selfState = "idle";
+                Ui.Tint(selfFace, th.FgColor, 300);
+                Ui.AnimTo(selfArc, OpacityProperty, 0, 300);
+                PaintSelf();
+            });
+        }
+
+        // 不知道总大小：一小段弧绕着转
+        void SelfSpin(bool on)
+        {
+            if (on == selfSpinning) return;
+            selfSpinning = on;
+            selfArc.BeginAnimation(Arc.ValueProperty, null);
+            selfArc.Value = on ? 0.22 : 0;
+            if (on) selfSpin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
+            else selfSpin.BeginAnimation(RotateTransform.AngleProperty, null);
         }
 
         // Tailscale 没在跑、没登录：本机变成空心圈，打个红色感叹号，名字的位置写原因
@@ -290,6 +454,7 @@ namespace TailOrbit
                 if (nodes.TryGetValue(d.Ip, out n)) n.Update(d);
                 else added.Add(n = AddNode(d));
                 n.Ring = RingOf(d);
+                n.SetWatched(Settings.Watched(d), false);
             }
             foreach (var n in nodes.Values.Where(x => !seen.Contains(x.Dev.Ip) && x.Job == null).ToList()) RemoveNode(n);
             bool intro = fresh;
@@ -355,14 +520,97 @@ namespace TailOrbit
 
         void RemoveNode(Node n)
         {
+            if (fan != null && fan.Node == n) CloseFan();
+            if (pending == n) pending = null;
+            if (inFrom == n) { flowIn.Stop(n, true); inFrom = null; }
             nodes.Remove(n.Dev.Ip);
             n.Vanish(() => { links.Children.Remove(n.Link); stars.Children.Remove(n.Root); });
         }
 
+        // 点设备：发送中是取消；不然弹出菜单（再点一下收起）。在线的先敲一下常见的网页端口，有开着的就多一个“网页”
         void OnNodeClick(Node n)
         {
             if (n.Busy) { n.Job.Cancel(); return; }
-            if (!n.Dev.Online) { n.Refuse(); return; }
+            bool same = fan != null && fan.Node == n;
+            CloseFan();
+            if (same || pending == n) { if (pending == n) { n.Mark(false); pending = null; } return; }
+            if (pending != null) pending.Mark(false);
+            n.Mark(true);
+            KeyValuePair<DateTime, int> known;
+            bool fresh = webPorts.TryGetValue(n.Dev.Ip, out known) && (DateTime.Now - known.Key).TotalMinutes < 2;
+            if (!n.Dev.Online || fresh) { OpenFan(n, fresh ? known.Value : 0); return; }
+            pending = n;
+            string ip = n.Dev.Ip;
+            Task.Run(() => Web.Find(ip, 400)).ContinueWith(t =>
+            {
+                int port = t.IsFaulted ? 0 : t.Result;
+                webPorts[ip] = new KeyValuePair<DateTime, int>(DateTime.Now, port);
+                if (pending != n) return;
+                pending = null;
+                OpenFan(n, port);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        void OpenFan(Node n, int webPort)
+        {
+            if (n.Gone || current != "home") { n.Mark(false); return; }
+            fan = new Fan(th, menuLayer, n, o, new Size(field.ActualWidth, field.ActualHeight), MenuFor(n, webPort), f => { if (fan == f) CloseFan(); else f.Close(); });
+        }
+
+        void CloseFan()
+        {
+            if (fan == null) return;
+            fan.Node.Mark(false);
+            fan.Close();
+            fan = null;
+        }
+
+        // 在线：[终端] [网页] 发文件 复制域名 掉线提醒，第一个是实心的；离线只剩复制域名和掉线提醒
+        List<FanItem> MenuFor(Node n, int webPort)
+        {
+            var d = n.Dev;
+            var list = new List<FanItem>();
+            if (d.Online)
+            {
+                string ssh = Ssh.Target(d);
+                if (ssh != null) list.Add(new FanItem { Icon = "terminal", Label = "终端", Detail = "ssh " + ssh, Act = () => Ssh.Open(ssh) });
+                if (webPort > 0)
+                {
+                    string url = Web.Url(d, webPort, true);
+                    list.Add(new FanItem { Icon = "globe", Label = "网页", Detail = Web.Url(d, webPort, false), Act = () => Process.Start(url) });
+                }
+                list.Add(new FanItem { Icon = "send", Label = "发文件", Act = () => PickAndSend(n) });
+                list[0].Primary = true;
+            }
+            string name = d.Dns != "" ? d.Dns : d.Ip;
+            list.Add(new FanItem
+            {
+                Icon = "copy", Label = "复制域名", Detail = name,
+                Toggle = () => Ui.CopyText(name) ? new FanItem { Icon = "check", Label = "已复制", Detail = name, Good = true } : null
+            });
+            list.Add(Bell(n, null));
+            return list;
+        }
+
+        // 掉线提醒的开关；said 是刚点过之后牌子上的回应
+        FanItem Bell(Node n, string said)
+        {
+            bool on = Settings.Watched(n.Dev);
+            return new FanItem
+            {
+                Icon = on ? "bell" : "bell-off", Label = said ?? (on ? "掉线提醒开着" : "掉线时提醒我"), Lit = on,
+                Toggle = () =>
+                {
+                    Settings.SetWatched(n.Dev, !on);
+                    Alerts.Seed(n.Dev);
+                    n.SetWatched(!on, true);
+                    return Bell(n, !on ? "离线、恢复都会告诉你" : "不再提醒");
+                }
+            };
+        }
+
+        void PickAndSend(Node n)
+        {
             var dlg = new OpenFileDialog { Multiselect = true, Title = "发到 " + n.Dev.Name };
             if (dlg.ShowDialog(this) == true) Send(n, dlg.FileNames.ToList());
         }
@@ -390,15 +638,17 @@ namespace TailOrbit
             rings[2].StrokeDashArray = EvenDash(2 * Math.PI * radius[2], 1, 9);   // 离线：一串点
             selfAt.X = o.X;
             selfAt.Y = o.Y;
-            flow.Width = w;
-            flow.Height = h;
+            flow.Width = flowIn.Width = w;
+            flow.Height = flowIn.Height = h;
             Place(w, h);
             foreach (var n in nodes.Values.Where(x => !x.Gone))
             {
                 n.SetLabelUp(LabelUp(n.Angle));
                 n.MoveTo(Spot(n), o, animate);
             }
+            if (fan != null && (fan.At - Spot(fan.Node)).Length > 1) CloseFan();
             flow.InvalidateVisual();
+            flowIn.InvalidateVisual();
         }
 
         // 给每台设备在它那一圈上挑个角度：原来的位置还放得下就不动（换圈时只沿着那条线进出），
@@ -509,6 +759,12 @@ namespace TailOrbit
             leave.Stop();
             e.Handled = true;
             var paths = PathsOf(e.Data);
+            var page = CurrentPage;
+            if (page != null)
+            {
+                e.Effects = paths != null && page.CanTake(paths, e.GetPosition(page)) ? DragDropEffects.Copy : DragDropEffects.None;
+                return;
+            }
             if (paths == null) { e.Effects = DragDropEffects.None; return; }
             var p = e.GetPosition(field);
             if (!lifted) BeginDrag(paths, p);
@@ -534,6 +790,7 @@ namespace TailOrbit
             lifted = true;
             locked = false;
             if (popOpen) ShowPopover(false);
+            CloseFan();
             foreach (var n in nodes.Values) n.SetLift(true);
             chipFill = new SolidColorBrush(((SolidColorBrush)th.Chip).Color);
             chipInk = new SolidColorBrush(th.FgColor);
@@ -589,6 +846,16 @@ namespace TailOrbit
         {
             e.Handled = true;
             var paths = PathsOf(e.Data);
+            var page = CurrentPage;
+            if (page != null)
+            {
+                var at = e.GetPosition(page);
+                bool take = paths != null && page.CanTake(paths, at);
+                e.Effects = take ? DragDropEffects.Copy : DragDropEffects.None;
+                if (take) page.Take(paths, at);
+                else page.DragEnd();
+                return;
+            }
             var target = HitTest(e.GetPosition(field));
             bool ok = paths != null && target != null && Accepts(target);
             // 明确告诉资源管理器是“复制”：不写的话会把它允许的“移动”原样还回去，有删掉原文件的风险
@@ -639,10 +906,11 @@ namespace TailOrbit
             if (t == null || t.Result == "cancel") return;
             Node n;
             nodes.TryGetValue(t.Ip, out n);
-            RenderRecent(n != null && IsVisible ? (Point?)n.Center : null);
+            Point? from = t.In ? o : n != null ? (Point?)n.Center : null;   // 收到的从本机飞出来
+            RenderRecent(IsVisible ? from : null);
         }
 
-        // 最近 5 次（不算取消的）；from 有值时，最新那条从设备那里飞进来，其余的往右让一格
+        // 最近 5 次（不算取消的）；from 有值时，最新那条从设备（或本机）那里飞进来，其余的往右让一格
         void RenderRecent(Point? from)
         {
             recent.Children.Clear();
@@ -676,18 +944,21 @@ namespace TailOrbit
             Ui.After(850, () => { overlay.Children.Remove(ghost); first.Opacity = 1; });
         }
 
+        // 一个文件方块：发出去的右上角是绿点（送到了）或红点（没送到）；收到的是一个实心的收件标，刚收到还没看的整块亮着
         FrameworkElement Tile(Transfer t)
         {
-            var icon = new IconView(Icons.ForFiles(t.Paths), 18, th.Mute);
-            var box = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(11), Background = th.Tile, Child = icon };
-            var dot = new Ellipse { Width = 13, Height = 13, Fill = t.Result == "ok" ? th.Ok : th.Bad, Stroke = th.Bg, StrokeThickness = 2, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -4, -4, 0) };
+            var icon = new IconView(Icons.ForFiles(t.Paths), 18, t.Fresh ? th.Fg : th.Mute);
+            var box = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(11), Background = t.Fresh ? th.Chip : th.Tile, Child = icon };
+            FrameworkElement mark = new Ellipse { Width = 13, Height = 13, Fill = t.Result == "ok" ? th.Ok : th.Bad, Stroke = th.Bg, StrokeThickness = 2, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -4, -4, 0) };
+            if (t.In) mark = new Border { Width = 17, Height = 17, CornerRadius = new CornerRadius(8.5), Background = th.Fg, BorderBrush = th.Bg, BorderThickness = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -5, -5, 0), Child = new IconView("inbox", 9, th.Ink, 2.8) };
             var shift = new TranslateTransform();
-            string tip = Ui.Describe(t.Paths) + "  ·  " + t.Target + "  ·  " + Ui.When(t.Time) + (t.Result == "ok" ? "" : "\n" + t.Error);
+            string who = t.In ? "来自 " + (t.Target != "" ? t.Target : "另一台设备") : t.Target;
+            string tip = Ui.Describe(t.Paths) + "  ·  " + who + "  ·  " + Ui.When(t.Time) + (t.Result == "ok" ? "" : "\n" + t.Error);
             var g = new Grid { Width = 40, Height = 40, Background = Brushes.Transparent, Cursor = Cursors.Hand, RenderTransform = shift, ToolTip = Ui.Tip(th, tip) };
             g.Children.Add(box);
-            g.Children.Add(dot);
+            g.Children.Add(mark);
             g.MouseEnter += delegate { box.Background = th.Chip; icon.Stroke = th.Fg; };
-            g.MouseLeave += delegate { box.Background = th.Tile; icon.Stroke = th.Mute; };
+            g.MouseLeave += delegate { box.Background = t.Fresh ? th.Chip : th.Tile; icon.Stroke = t.Fresh ? th.Fg : th.Mute; };
             // 点一下：在文件夹里显示；按住拖到设备上：再发一次（也能拖进别的程序）
             bool pressed = false;
             var down = new Point();
@@ -708,7 +979,9 @@ namespace TailOrbit
                 if (!pressed) return;
                 pressed = false;
                 g.ReleaseMouseCapture();
+                t.Fresh = false;
                 var p = t.Paths.FirstOrDefault(x => File.Exists(x) || Directory.Exists(x));
+                if (p == null && t.In) { Process.Start("explorer.exe", "shell:Downloads"); return; }   // 收到的被改了名或挪走了：打开“下载”
                 if (p == null) { Ui.Shake(shift); return; }   // 原文件已经不在了
                 Process.Start("explorer.exe", "/select,\"" + p + "\"");
             };
@@ -751,6 +1024,68 @@ namespace TailOrbit
             k.BorderBrush = down ? th.Fg : th.Rim;
             ((TextBlock)k.Child).Foreground = down ? th.Bg : th.Mute;
             Ui.AnimTo(k.RenderTransform, TranslateTransform.YProperty, down ? 2 : 0, 100);
+        }
+
+        // ---------- 顶上：分页标签 ----------
+
+        FrameworkElement Tabs()
+        {
+            tabs = new Segmented(th, new[] { "星网", "分享", "网络", "云盘", "本机" }, 0, false, false, 32, true) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 7, 0, 0) };
+            tabs.Picked += i => Switch(PageKeys[i]);
+            return tabs;
+        }
+
+        Page CurrentPage { get { return pages[current] as Page; } }
+
+        FrameworkElement MakePage(string key)
+        {
+            switch (key)
+            {
+                case "share": return new SharePage(host);
+                case "net": return new NetPage(host, ip => { Node n; return nodes.TryGetValue(ip, out n) ? n.Angle : double.NaN; });   // 设备方向跟星网一致
+                case "drive": return new DrivePage(host);
+                case "device": return new DevicePage(host);
+                default: return null;
+            }
+        }
+
+        // 换页：旧的一页往反方向淡出，新的一页从这边滑进来
+        public void Switch(string key)
+        {
+            if (key == current) return;
+            int to = Array.IndexOf(PageKeys, key), from = Array.IndexOf(PageKeys, current);
+            FrameworkElement next;
+            if (!pages.TryGetValue(key, out next))
+            {
+                next = MakePage(key);
+                if (next == null) { tabs.Select(from, true); return; }
+                next.Visibility = Visibility.Collapsed;
+                pages[key] = next;
+                root.Children.Insert(root.Children.IndexOf(home) + 1, next);
+            }
+            var prev = pages[current];
+            var leaving = CurrentPage;
+            if (leaving != null) leaving.Hidden();
+            if (popOpen) ShowPopover(false);
+            CloseFan();
+            int dir = to > from ? 1 : -1;
+            current = key;
+            if (tabs.Index != to) tabs.Select(to, true);
+            Ui.AnimTo(prev, OpacityProperty, 0, 150);
+            Ui.AnimTo(Shift(prev), TranslateTransform.XProperty, -24 * dir, 200);
+            Ui.After(160, () => { if (pages[current] != prev) prev.Visibility = Visibility.Collapsed; });
+            next.Visibility = Visibility.Visible;
+            Ui.AnimFrom(next, OpacityProperty, 0, 1, 240, 70);
+            Ui.AnimFrom(Shift(next), TranslateTransform.XProperty, 24 * dir, 0, 420, 70, MainEase.Settle);
+            var entering = next as Page;
+            if (entering != null) entering.Shown();
+        }
+
+        static TranslateTransform Shift(FrameworkElement e)
+        {
+            var t = e.RenderTransform as TranslateTransform;
+            if (t == null) e.RenderTransform = t = new TranslateTransform();
+            return t;
         }
 
         // ---------- 右上：设置和窗口按钮 ----------

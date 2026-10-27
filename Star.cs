@@ -1,4 +1,4 @@
-// 星网上的零件：一台设备（Node）、发送进度环（Arc）、从本机流向设备的光点（FlowLayer）
+// 星网上的零件：一台设备（Node）、进度环（Arc）、在本机和设备之间流动的光点（FlowLayer）
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,7 +13,8 @@ using System.Windows.Shell;
 
 namespace TailOrbit
 {
-    // 一台设备：圆盘（在线是实心圆，离线缩成空心圈）、发送进度环、送达时荡开的涟漪、名字，以及连回本机的线
+    // 一台设备：圆盘（在线是实心圆，离线缩成空心圈）、发送进度环、送达时荡开的涟漪、名字，以及连回本机的线；
+    // 鼠标指着、菜单开着时外面套一圈；正往本机发文件时一圈圈往外荡；要掉线提醒的右上角挂个铃铛
     class Node
     {
         public static readonly IEasingFunction Nudge = new BackEase { Amplitude = 0.2, EasingMode = EasingMode.EaseOut };
@@ -41,12 +42,13 @@ namespace TailOrbit
         readonly Run pctNum = new Run("0");
         readonly Arc arc;
         readonly RotateTransform spin = new RotateTransform();
-        readonly Ellipse ripple;
-        readonly ScaleTransform rippleScale = new ScaleTransform(1, 1);
+        readonly Ellipse ripple, halo, beacon;
+        readonly ScaleTransform rippleScale = new ScaleTransform(1, 1), haloScale = new ScaleTransform(1, 1), beaconScale = new ScaleTransform(1, 1), badgeScale = new ScaleTransform(0, 0);
+        readonly SolidColorBrush badgeInk;
         readonly Grid label;
         readonly TranslateTransform labelShift = new TranslateTransform();
         string state = "idle";   // idle 平时 / busy 发送中 / done 送到了 / fail 没送到
-        bool placed, lifted, aimed, hovering, known, spinning, waiting, labelUp;
+        bool placed, lifted, aimed, hovering, known, spinning, waiting, labelUp, marked, receiving, watched;
         int stamp, copyStamp, breath;
 
         public Node(Theme th, Device d)
@@ -62,7 +64,7 @@ namespace TailOrbit
 
             os = new IconView(Icons.ForOs(d.Os), 30, ink);
             kind = new IconView("file", 26, ink);
-            act = new IconView("send", 28, ink);
+            act = new IconView("x", 28, ink);   // 发送中指上去：取消
             check = new IconView("check", 32, ink, 2.4);
             pct = new TextBlock { FontFamily = Ui.DisplayFont, FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = ink, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
             pct.Inlines.Add(pctNum);
@@ -85,12 +87,19 @@ namespace TailOrbit
             tg.Children.Add(shake);
             disc.RenderTransformOrigin = new Point(0.5, 0.5);
             disc.RenderTransform = tg;
-            disc.Cursor = d.Online ? Cursors.Hand : null;
+            disc.Cursor = Cursors.Hand;
             size.ScaleX = size.ScaleY = d.Online ? 1 : OffScale;
             Canvas.SetLeft(disc, -40);
             Canvas.SetTop(disc, -40);
-            disc.MouseEnter += delegate { hovering = true; Paint(); };
-            disc.MouseLeave += delegate { hovering = false; Paint(); };
+            disc.MouseEnter += delegate { hovering = true; Paint(); HaloStyle(); };
+            disc.MouseLeave += delegate { hovering = false; Paint(); HaloStyle(); };
+            // 掉线提醒的铃铛：在圆盘里跟着圆盘一起缩放，挂在右上 45° 的边上
+            badgeInk = new SolidColorBrush(d.Online ? th.FgColor : th.MuteColor);
+            disc.Children.Add(new Border
+            {
+                Width = 22, Height = 22, CornerRadius = new CornerRadius(11), Background = th.Bg, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 1, 1, 0), Child = new IconView("bell", 12, badgeInk, 2.2), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = badgeScale, IsHitTestVisible = false
+            });
             disc.MouseLeftButtonUp += delegate { if (Click != null) Click(this); };
             WindowChrome.SetIsHitTestVisibleInChrome(disc, true);
 
@@ -100,6 +109,13 @@ namespace TailOrbit
             ripple = new Ellipse { Width = 84, Height = 84, Stroke = th.Ok, StrokeThickness = 2, Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = rippleScale };
             Canvas.SetLeft(ripple, -42);
             Canvas.SetTop(ripple, -42);
+            halo = new Ellipse { Width = 94, Height = 94, Stroke = th.Fg, StrokeThickness = 1.5, Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = haloScale };
+            Canvas.SetLeft(halo, -47);
+            Canvas.SetTop(halo, -47);
+            haloScale.ScaleX = haloScale.ScaleY = d.Online ? 1 : 0.8;
+            beacon = new Ellipse { Width = 80, Height = 80, Stroke = th.Fg, StrokeThickness = 1.5, Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = beaconScale };
+            Canvas.SetLeft(beacon, -40);
+            Canvas.SetTop(beacon, -40);
 
             label = Label(th, nameInk, labelShift, out name, out ip);
             name.Text = d.Name;
@@ -110,6 +126,8 @@ namespace TailOrbit
             Measure();
 
             Root.Children.Add(ripple);
+            Root.Children.Add(beacon);
+            Root.Children.Add(halo);
             Root.Children.Add(arc);
             Root.Children.Add(disc);
             Root.Children.Add(label);
@@ -194,9 +212,10 @@ namespace TailOrbit
             Ui.Tint(rim, on ? Theme.Fade(th.DimColor, 0) : th.DimColor, 450);
             Ui.Tint(ink, on ? th.InkColor : th.DimColor, 450);
             Ui.Tint(nameInk, on ? th.MuteColor : th.DimColor, 450);
+            Ui.Tint(badgeInk, on ? th.FgColor : th.MuteColor, 450);
             Ui.ScaleTo(size, on ? 1 : OffScale, 450, Ui.Glide);
+            Ui.ScaleTo(haloScale, on ? 1 : 0.8, 450, Ui.Glide);
             Ui.AnimTo(label, Canvas.TopProperty, LabelTop(), 450, Ui.Glide);
-            disc.Cursor = on ? Cursors.Hand : null;
             SetLift(lifted);
         }
 
@@ -268,6 +287,7 @@ namespace TailOrbit
             Ui.ScaleTo(lift, fade ? 0.86 : 1, 350, Ui.Spring);
             Breathe();
             LinkStyle();
+            HaloStyle();
         }
 
         public void SetAim(bool on)
@@ -301,6 +321,46 @@ namespace TailOrbit
             Ui.Shake(shake);
         }
 
+        // 菜单开着：外面那圈亮起来；名字先隐去，给按钮让地方（菜单旁的牌子会说清楚）
+        public void Mark(bool on)
+        {
+            if (on == marked) return;
+            marked = on;
+            if (on) Ui.ScaleFrom(haloScale, Dev.Online ? 0.86 : 0.7, Dev.Online ? 1 : 0.8, 380, 0, Ui.Spring);
+            Ui.AnimTo(label, UIElement.OpacityProperty, on ? 0 : 1, on ? 120 : 250);
+            HaloStyle();
+        }
+
+        void HaloStyle()
+        {
+            double op = marked ? 0.5 : hovering && !Busy && !lifted ? 0.16 : 0;
+            Ui.AnimTo(halo, UIElement.OpacityProperty, op, marked ? 200 : 150);
+        }
+
+        // 正往本机发文件：一圈圈往外荡，连线亮一些
+        public void Receiving(bool on)
+        {
+            if (on == receiving) return;
+            receiving = on;
+            if (on)
+            {
+                var grow = new DoubleAnimation(1, 1.55, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle };
+                beaconScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+                beaconScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+                beacon.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle });
+            }
+            else Ui.AnimTo(beacon, UIElement.OpacityProperty, 0, 300);
+            LinkStyle();
+        }
+
+        public void SetWatched(bool on, bool animate)
+        {
+            if (on == watched) return;
+            watched = on;
+            if (animate) Ui.ScaleTo(badgeScale, on ? 1 : 0, on ? 420 : 200, on ? Ui.Spring : Ui.Ease);
+            else badgeScale.ScaleX = badgeScale.ScaleY = on ? 1 : 0;
+        }
+
         public void Copied()
         {
             int k = ++copyStamp;
@@ -317,6 +377,7 @@ namespace TailOrbit
             if (!Dev.Online || Gone) op = 0;
             else if (state == "fail") { op = 1; w = 2; c = th.BadColor; }
             else if (Busy) { op = 0.3; w = 2; }
+            else if (receiving) { op = 0.38; w = 1.75; }
             else if (aimed) { op = 1; w = 2.5; }
             else if (lifted) { op = 0.4; dash = true; }
             Ui.AnimTo(Link, UIElement.OpacityProperty, op, 250);
@@ -334,11 +395,10 @@ namespace TailOrbit
             }
         }
 
-        // 圆盘里显示什么：送到了是 ✓；鼠标放上去是能做的事（发送 / 取消）；发送中是百分比，不知道进度时是文件类型；平时是设备类型
+        // 圆盘里显示什么：送到了是 ✓；发送中鼠标放上去是 ✕（点了取消），不然是百分比，不知道进度时是文件类型；平时是设备类型
         void Paint()
         {
-            string show = state == "done" ? "check" : hovering && Dev.Online ? "act" : state == "busy" ? (known ? "pct" : "kind") : "os";
-            act.Show(Busy ? "x" : "send");
+            string show = state == "done" ? "check" : hovering && Busy ? "act" : state == "busy" ? (known ? "pct" : "kind") : "os";
             Swap(os, show == "os");
             Swap(kind, show == "kind");
             Swap(pct, show == "pct");
@@ -370,6 +430,7 @@ namespace TailOrbit
             Breathe();
             Paint();
             LinkStyle();
+            HaloStyle();
         }
 
         // f：0～1 是进度；SendJob.Unknown 不知道进度（打包中）；SendJob.Keep 对方没回应、还在重试
@@ -452,6 +513,7 @@ namespace TailOrbit
             });
             Paint();
             LinkStyle();
+            HaloStyle();
         }
     }
 
@@ -461,19 +523,20 @@ namespace TailOrbit
         public static readonly IEasingFunction Sink = new CubicEase { EasingMode = EasingMode.EaseIn };       // 被吸进去
     }
 
-    // 发送进度环：从正上方顺时针画到 Value（0～1）
+    // 进度环：从正上方顺时针画到 Value（0～1）；发送进度和公开分享的倒计时都用它
     class Arc : FrameworkElement
     {
         public static readonly DependencyProperty ValueProperty = DependencyProperty.Register("Value", typeof(double), typeof(Arc), new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
         public readonly SolidColorBrush Brush;
         readonly Pen pen;
-        const double R = 54;
+        readonly double R;
 
-        public Arc(Color c)
+        public Arc(Color c, double radius = 54, double thickness = 3)
         {
             Brush = new SolidColorBrush(c);
-            pen = new Pen(Brush, 3) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
-            Width = Height = 120;
+            pen = new Pen(Brush, thickness) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+            R = radius;
+            Width = Height = 2 * radius + 12;
             IsHitTestVisible = false;
         }
 
@@ -487,7 +550,7 @@ namespace TailOrbit
         {
             double v = Math.Min(1, Value);
             if (v <= 0.001) return;
-            var c = new Point(60, 60);
+            var c = new Point(Width / 2, Height / 2);
             if (v >= 0.999) { dc.DrawEllipse(null, pen, c, R, R); return; }
             double a = v * 2 * Math.PI;
             var g = new StreamGeometry();
@@ -501,7 +564,7 @@ namespace TailOrbit
         }
     }
 
-    // 发送时从本机流向设备的光点；只在有发送时跟着屏幕刷新跑
+    // 发送时从本机流向设备的光点（inward 时反过来：收件时从设备流进本机）；只在有传输时跟着屏幕刷新跑
     class FlowLayer : FrameworkElement
     {
         class Stream
@@ -509,19 +572,24 @@ namespace TailOrbit
             public Node To;
             public bool On = true;
             public double Last = double.NegativeInfinity;              // 上次放出光点的时刻（毫秒）
-            public readonly List<double> Parts = new List<double>();   // 每个光点走到哪儿：0 在本机中心，1 在设备中心
+            public readonly List<double> Parts = new List<double>();   // 每个光点走到哪儿：0 在出发的圆心，1 在到达的圆心
         }
 
         readonly List<Stream> streams = new List<Stream>();
         readonly Brush dot;
         readonly Func<Point> origin;
+        readonly bool inward;
+        readonly double r0, r1;   // 从出发的圆盘边上出来，到到达的圆盘边上消失（本机圆盘大些）
         bool hooked;
         double prev = -1;
 
-        public FlowLayer(Brush dot, Func<Point> origin)
+        public FlowLayer(Brush dot, Func<Point> origin, bool inward = false)
         {
             this.dot = dot;
             this.origin = origin;
+            this.inward = inward;
+            r0 = inward ? 46 : 52;
+            r1 = inward ? 52 : 46;
             IsHitTestVisible = false;
             IsVisibleChanged += delegate { Hook(); };
         }
@@ -580,12 +648,12 @@ namespace TailOrbit
                 if (s.On && now - s.Last >= 80)
                 {
                     s.Last = now;
-                    s.Parts.Add(52 / len);   // 从本机圆盘边上出发
+                    s.Parts.Add(r0 / len);
                 }
                 for (int k = s.Parts.Count - 1; k >= 0; k--)
                 {
                     s.Parts[k] += dt * 0.22 / len;   // 每毫秒 0.22px
-                    if (s.Parts[k] >= 1 - 46 / len) s.Parts.RemoveAt(k);   // 到设备圆盘边上消失
+                    if (s.Parts[k] >= 1 - r1 / len) s.Parts.RemoveAt(k);
                 }
                 if (!s.On && s.Parts.Count == 0) streams.RemoveAt(i);
             }
@@ -598,14 +666,15 @@ namespace TailOrbit
             var o = origin();
             foreach (var s in streams)
             {
-                var d = s.To.Center - o;
-                double len = Math.Max(100, d.Length), u0 = 52 / len, u1 = 1 - 46 / len;
+                Point from = inward ? s.To.Center : o, to = inward ? o : s.To.Center;
+                var d = to - from;
+                double len = Math.Max(100, d.Length), u0 = r0 / len, u1 = 1 - r1 / len;
                 foreach (double u in s.Parts)
                 {
                     double a = Math.Min(1, Math.Min((u - u0) * 10, (u1 - u) * 10));   // 两头淡入淡出
                     if (a <= 0) continue;
                     dc.PushOpacity(a);
-                    dc.DrawEllipse(dot, null, o + d * u, 2.3, 2.3);
+                    dc.DrawEllipse(dot, null, from + d * u, 2.3, 2.3);
                     dc.Pop();
                 }
             }

@@ -1,6 +1,7 @@
 // TailOrbit：Tailscale 的 Windows 小工具——把文件拖到设备上，就用 Taildrop 发过去
 // 主界面（MainWindow.cs、Star.cs）：点托盘图标或开始菜单打开。“星网”——本机在中间，设备按直连 / 中继 / 离线排在三圈上；
-// 把文件拖到设备上就用 Taildrop 发过去，也能点设备挑文件；左下是最近发过的，右上齿轮里是开机自启和退出。
+// 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、网页、发文件、复制域名、掉线提醒）；
+// 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的，右上齿轮里是开机自启和退出。
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
 
@@ -83,9 +84,9 @@ namespace TailOrbit
 
     class Device
     {
-        public string Ip = "", Name = "", Os = "", StableId = "";
+        public string Ip = "", Name = "", Os = "", StableId = "", Dns = "";   // Dns：MagicDNS 全名，不带末尾的点
         public string Link = "";   // direct 直连 / relay 经中继 / "" 还不知道（只有正在通信的设备，status 才说得出走哪条路）
-        public bool Online;
+        public bool Online, Ssh;   // Ssh：对方开了 Tailscale SSH
         public string Key { get { return Ip + "|" + Name + "|" + Online + "|" + Os; } }
     }
 
@@ -102,7 +103,7 @@ namespace TailOrbit
         public string Out, Err;
     }
 
-    static class Tailscale
+    static partial class Tailscale
     {
         public static readonly string Exe = File.Exists(@"C:\Program Files\Tailscale\tailscale.exe") ? @"C:\Program Files\Tailscale\tailscale.exe" : "tailscale.exe";
 
@@ -176,6 +177,8 @@ namespace TailOrbit
                 {
                     d.Os = (Get(peer, "OS") as string) ?? "";
                     d.StableId = (Get(peer, "ID") as string) ?? "";
+                    d.Dns = ((Get(peer, "DNSName") as string) ?? "").TrimEnd('.');
+                    d.Ssh = Get(peer, "sshHostKeys") is object[];
                     // 正在通信时 CurAddr 是对方的直连地址，为空说明走的中继；没在通信就看不出来
                     if (true.Equals(Get(peer, "Active"))) d.Link = ((Get(peer, "CurAddr") as string) ?? "") != "" ? "direct" : "relay";
                 }
@@ -203,6 +206,7 @@ namespace TailOrbit
             var ips = Get(node, "TailscaleIPs") as object[];
             d.Ip = ips != null && ips.Length > 0 ? (ips[0] as string) ?? "" : "";
             string dns = (Get(node, "DNSName") as string) ?? "";
+            d.Dns = dns.TrimEnd('.');
             d.Name = dns.Length > 0 ? dns.Split('.')[0] : (Get(node, "HostName") as string) ?? "";
             d.Os = (Get(node, "OS") as string) ?? "";
             d.Online = true;
@@ -493,12 +497,14 @@ namespace TailOrbit
     class Transfer
     {
         public DateTime Time;
-        public string Target = "", Ip = "", Os = "", Result = "", Error = "";
+        public string Target = "", Ip = "", Os = "", Result = "", Error = "";   // 收到的文件：Target 是发送方
         public List<string> Paths = new List<string>();
         public long Bytes;
+        public bool In;      // 别的设备发来的
+        public bool Fresh;   // 这次运行时收到、还没点开看过（不存盘）
     }
 
-    // 传输记录：一行一条追加写进 history.jsonl，只增不删
+    // 传输记录（发出去的和收到的）：一行一条追加写进 history.jsonl，只增不删
     static class History
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "history.jsonl");
@@ -526,6 +532,7 @@ namespace TailOrbit
                 var paths = Tailscale.Get(o, "paths") as object[];
                 if (paths != null) t.Paths = paths.OfType<string>().ToList();
                 t.Bytes = Convert.ToInt64(Tailscale.Get(o, "bytes") ?? 0L);
+                t.In = Text(o, "dir") == "in";
                 list.Add(t);
             }
             return list;
@@ -538,17 +545,32 @@ namespace TailOrbit
 
         public static void Record(SendJob j, string result)
         {
-            var t = new Transfer
+            Add(new Transfer
             {
                 Time = DateTime.Now, Target = j.Target.Name, Ip = j.Target.Ip, Os = j.Target.Os, Paths = j.Paths, Bytes = j.TotalBytes,
                 Result = result == null ? "ok" : result == "" ? "cancel" : "fail", Error = result ?? ""
-            };
+            });
+        }
+
+        // 收到了文件；from 是 null 时没认出是哪台设备发的
+        public static void RecordIn(Device from, List<string> paths, long bytes)
+        {
+            Add(new Transfer
+            {
+                Time = DateTime.Now, In = true, Fresh = true, Target = from != null ? from.Name : "", Ip = from != null ? from.Ip : "", Os = from != null ? from.Os : "",
+                Paths = paths, Bytes = bytes, Result = "ok"
+            });
+        }
+
+        static void Add(Transfer t)
+        {
             Items.Add(t);
             var o = new Dictionary<string, object>
             {
                 { "time", t.Time.ToString("o") }, { "target", t.Target }, { "ip", t.Ip }, { "os", t.Os },
                 { "paths", t.Paths }, { "bytes", t.Bytes }, { "result", t.Result }, { "error", t.Error }
             };
+            if (t.In) o["dir"] = "in";
             try
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FilePath));
@@ -795,6 +817,7 @@ namespace TailOrbit
         HwndSource sink;
         WinForms.NotifyIcon tray;
         EventWaitHandle showSignal;
+        bool sweeping;
 
         public void Start(bool showMain)
         {
@@ -823,13 +846,40 @@ namespace TailOrbit
             // 别处再启动一次本程序（开始菜单、双击）时，把主界面拿出来
             showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
             ThreadPool.RegisterWaitForSingleObject(showSignal, delegate { panel.Dispatcher.BeginInvoke(new Action(ShowMain)); }, null, Timeout.Infinite, false);
+
+            // 分享出去的文件由本程序提供；公开的到点关掉（程序没开时到点的，下次启动先关）
+            FileServer.Start();
+            var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+            sweep.Tick += delegate { Sweep(); };
+            sweep.Start();
+            Sweep();
+            Inbox.Start();
+            Alerts.Start(this);
             if (showMain) ShowMain();
+        }
+
+        void Sweep()
+        {
+            if (sweeping) return;
+            sweeping = true;
+            Task.Run(() => Shares.Sweep()).ContinueWith(t =>
+            {
+                sweeping = false;
+                if (!t.IsFaulted && t.Result.Count > 0) Notify("公开分享到时间关了", string.Join("、", t.Result));
+            }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         public void ShowMain()
         {
             if (main == null) main = new MainWindow(this);
             main.Open();
+        }
+
+        // 一页跳到另一页（比如网络页里“去看”打不开的分享）
+        public void ShowPage(string key)
+        {
+            ShowMain();
+            main.Switch(key);
         }
 
         IntPtr OnMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
