@@ -248,12 +248,12 @@ namespace TailOrbit
             at.Y = Link.Y2 = p.Y;
         }
 
-        // 出场：在线的先从本机长出一条线，设备随后弹出来；离线的慢慢浮现
-        public void Appear(int order, Point origin, bool intro)
+        // 出场：在线的先从本机长出一条线，设备随后弹出来；离线的慢慢浮现。lead：开屏整体晚多久开始
+        public void Appear(int order, Point origin, bool intro, int lead = 0)
         {
             if (Dev.Online)
             {
-                int dl = intro ? 280 + order * 150 : 0, dp = intro ? 640 + order * 150 : 220;
+                int dl = intro ? lead + 280 + order * 150 : 0, dp = intro ? lead + 640 + order * 150 : 220;
                 var c = Center;
                 Ui.AnimFrom(Link, Line.X2Property, origin.X, c.X, 520, dl, Ui.Glide);
                 Ui.AnimFrom(Link, Line.Y2Property, origin.Y, c.Y, 520, dl, Ui.Glide);
@@ -262,7 +262,7 @@ namespace TailOrbit
             }
             else
             {
-                int d = intro ? 980 + order * 120 : 0;
+                int d = intro ? lead + 980 + order * 120 : 0;
                 Ui.AnimFrom(Root, UIElement.OpacityProperty, 0, lifted ? 0.3 : 1, 700, d);
                 Ui.ScaleFrom(pulse, 0.6, 1, 700, d);
             }
@@ -310,8 +310,8 @@ namespace TailOrbit
             {
                 if (k != breath) return;
                 var a = new DoubleAnimation(1, 1.07, TimeSpan.FromMilliseconds(650)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
-                fx.BeginAnimation(ScaleTransform.ScaleXProperty, a);
-                fx.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+                Ui.Loop(disc, fx, ScaleTransform.ScaleXProperty, a);
+                Ui.Loop(disc, fx, ScaleTransform.ScaleYProperty, a);
             });
         }
 
@@ -345,9 +345,9 @@ namespace TailOrbit
             if (on)
             {
                 var grow = new DoubleAnimation(1, 1.55, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle };
-                beaconScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-                beaconScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-                beacon.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle });
+                Ui.Loop(beacon, beaconScale, ScaleTransform.ScaleXProperty, grow);
+                Ui.Loop(beacon, beaconScale, ScaleTransform.ScaleYProperty, grow);
+                Ui.Loop(beacon, beacon, UIElement.OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1800)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = MainEase.Settle });
             }
             else
             {
@@ -356,8 +356,8 @@ namespace TailOrbit
                 Ui.After(320, () =>
                 {
                     if (receiving) return;
-                    beaconScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-                    beaconScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                    Ui.Unloop(beaconScale, ScaleTransform.ScaleXProperty);
+                    Ui.Unloop(beaconScale, ScaleTransform.ScaleYProperty);
                 });
             }
             LinkStyle();
@@ -396,11 +396,11 @@ namespace TailOrbit
             if (dash && Link.StrokeDashArray.Count == 0)
             {
                 Link.StrokeDashArray = new DoubleCollection { 2, 14 / 3.0 };   // 线宽 1.5 时是 3px 实、7px 空
-                Link.BeginAnimation(Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, -20 / 3.0, TimeSpan.FromMilliseconds(700)) { RepeatBehavior = RepeatBehavior.Forever });
+                Ui.Loop(Link, Link, Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, -20 / 3.0, TimeSpan.FromMilliseconds(700)) { RepeatBehavior = RepeatBehavior.Forever });
             }
             else if (!dash && Link.StrokeDashArray.Count > 0)
             {
-                Link.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
+                Ui.Unloop(Link, Shape.StrokeDashOffsetProperty);
                 Link.StrokeDashArray = new DoubleCollection();
             }
         }
@@ -465,8 +465,8 @@ namespace TailOrbit
             spinning = on;
             arc.BeginAnimation(Arc.ValueProperty, null);
             arc.Value = on ? 0.22 : 0;
-            if (on) spin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
-            else spin.BeginAnimation(RotateTransform.AngleProperty, null);
+            if (on) Ui.Loop(arc, spin, RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
+            else Ui.Unloop(spin, RotateTransform.AngleProperty);
         }
 
         // 对方没回应、还在重试：进度环一明一暗地等
@@ -474,7 +474,7 @@ namespace TailOrbit
         {
             if (on == waiting) return;
             waiting = on;
-            if (on) arc.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, 0.3, TimeSpan.FromMilliseconds(600)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
+            if (on) Ui.Loop(arc, arc, UIElement.OpacityProperty, new DoubleAnimation(1, 0.3, TimeSpan.FromMilliseconds(600)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
             else Ui.AnimTo(arc, UIElement.OpacityProperty, 1, 200);
         }
 

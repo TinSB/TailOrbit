@@ -87,16 +87,14 @@ namespace TailOrbit
         public override void Shown()
         {
             Load();
-            orbitTurn.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(60)) { RepeatBehavior = RepeatBehavior.Forever });
             if (stage == "wait") Waiting(true);
         }
 
         public override void Hidden()
         {
-            orbitTurn.BeginAnimation(RotateTransform.AngleProperty, null);
             clip.Stop();
-            keyPop.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            keyPop.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            Ui.Unloop(keyPop, ScaleTransform.ScaleXProperty);
+            Ui.Unloop(keyPop, ScaleTransform.ScaleYProperty);
         }
 
         async void Load()
@@ -129,10 +127,12 @@ namespace TailOrbit
         static Data Fetch()
         {
             var d = new Data();
-            var r = Tailscale.Run("drive list");
+            CmdResult r;
+            try { r = Tailscale.Run("drive list"); }
+            catch (Win32Exception) { d.Error = L.T("未安装 Tailscale"); return d; }   // 主界面在这一页上盖着安装提示
             if (r.Code != 0)
             {
-                string err = Tailscale.FirstLine(r.Err, L.T("读不到云盘"));
+                string err = Tailscale.FirstLine(r.Err, L.T("无法读取云盘"));
                 if (err.Contains("drive:share") || err.Contains("not enabled")) d.Locked = true;
                 else d.Error = err;
             }
@@ -231,6 +231,9 @@ namespace TailOrbit
             Canvas.SetLeft(orbit, 20);
             Canvas.SetTop(orbit, 20);
             art.Children.Add(orbit);
+            // 外圈慢慢转（一分钟一圈），只在看得见时转；重画时从当前角度接着转，不跳回去
+            double turned = orbitTurn.Angle % 360;
+            Ui.Loop(orbit, orbitTurn, RotateTransform.AngleProperty, new DoubleAnimation(turned, turned + 360, TimeSpan.FromSeconds(60)) { RepeatBehavior = RepeatBehavior.Forever });
             spokes = new Canvas();
             art.Children.Add(spokes);
             var ring = new Ellipse { Width = 220, Height = 220, Stroke = Th.Hair, StrokeThickness = 1 };
@@ -287,13 +290,13 @@ namespace TailOrbit
         {
             stage = to;
             var s = new StackPanel();
-            var title = new TextBlock { Text = to == "done" ? L.T("云盘开通了") : L.T("云盘还没开"), FontFamily = Ui.DisplayFont, FontSize = 28, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg };
+            var title = new TextBlock { Text = to == "done" ? L.T("云盘已开通") : L.T("云盘未开通"), FontFamily = Ui.DisplayFont, FontSize = 28, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg };
             s.Children.Add(title);
             if (to == "idle")
             {
-                s.Children.Add(Para(L.T("开通后能把文件夹共享给自己的其他设备，也能直接打开它们共享的。")));
+                s.Children.Add(Para(L.T("开通后，可将文件夹共享给你的其他设备，也可直接打开其他设备共享的文件夹。")));
                 if (failure != null) s.Children.Add(FailText(failure));
-                var go = Kit.Button(Th, L.T("一键开通"), true, Begin);
+                var go = Kit.Button(Th, L.T("立即开通"), true, Begin);
                 go.Height = 44;
                 go.MinWidth = 140;
                 go.HorizontalAlignment = HorizontalAlignment.Left;
@@ -305,25 +308,25 @@ namespace TailOrbit
             {
                 bool work = to == "work";
                 var steps = new StackPanel { Margin = new Thickness(0, 22, 0, 0) };
-                steps.Children.Add(Numbered(1, work, L.T("在打开的网页上点 Generate access token"), work ? null : Kit.Button(Th, L.T("再打开一次"), false, () => OpenUrl(Api.KeysPage))));
-                steps.Children.Add(Numbered(2, work, L.T("点 Copy 复制生成的令牌"), null));
-                steps.Children.Add(Numbered(3, false, work ? working : L.T("回到这里，自动开通"), null, work));
+                steps.Children.Add(Numbered(1, work, L.T("在打开的网页中点击“Generate access token”"), work ? null : Kit.Button(Th, L.T("重新打开"), false, () => OpenUrl(Api.KeysPage))));
+                steps.Children.Add(Numbered(2, work, L.T("点击“Copy”复制生成的令牌"), null));
+                steps.Children.Add(Numbered(3, false, work ? working : L.T("返回此处，将自动完成开通"), null, work));
                 s.Children.Add(steps);
                 if (!work)
                 {
                     s.Children.Add(PasteBox());
-                    s.Children.Add(Para(L.T("令牌只用这一次，用完马上作废。"), 13));
+                    s.Children.Add(Para(L.T("令牌仅使用一次，用后立即撤销。"), 13));
                 }
                 if (failure != null) s.Children.Add(FailText(failure));
                 if (!work)
                 {
-                    var back = Kit.Button(Th, L.T("先不开"), false, () => { failure = null; Waiting(false); Step("idle", true); Load(); });
+                    var back = Kit.Button(Th, L.T("暂不开通"), false, () => { failure = null; Waiting(false); Step("idle", true); Load(); });
                     back.HorizontalAlignment = HorizontalAlignment.Left;
                     back.Margin = new Thickness(0, 18, 0, 0);
                     s.Children.Add(back);
                 }
             }
-            else s.Children.Add(Para(L.T("文件夹拖进来就能共享。")));
+            else s.Children.Add(Para(L.T("将文件夹拖到此处即可共享。")));
             side.Child = s;
             if (!animate) return;
             var shift = new TranslateTransform();
@@ -356,7 +359,7 @@ namespace TailOrbit
                 Canvas.SetLeft(arc, 13 - arc.Width / 2);
                 Canvas.SetTop(arc, 13 - arc.Height / 2);
                 num.Children.Add(new Canvas { Children = { arc } });
-                spin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
+                Ui.Loop(arc, spin, RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
             }
             if (done) num.Children.Add(new IconView("check", 13, Th.Ink, 2.6));
             else num.Children.Add(new TextBlock { Text = n.ToString(), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
@@ -376,7 +379,7 @@ namespace TailOrbit
         FrameworkElement PasteBox()
         {
             var box = new TextBox { FontFamily = Ui.MonoFont, FontSize = 13, Foreground = Th.Fg, CaretBrush = Th.Fg, Background = Brushes.Transparent, BorderThickness = new Thickness(0), VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(0) };
-            var hint = new TextBlock { Text = L.T("或者粘贴到这里"), FontSize = 13, Foreground = Th.Dim, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            var hint = new TextBlock { Text = L.T("或粘贴到此处"), FontSize = 13, Foreground = Th.Dim, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
             box.TextChanged += delegate
             {
                 hint.Visibility = box.Text == "" ? Visibility.Visible : Visibility.Collapsed;
@@ -388,13 +391,13 @@ namespace TailOrbit
         // 不想给令牌的：复制那两段、打开规则编辑页自己贴
         FrameworkElement Manual()
         {
-            var label = new TextBlock { Text = L.T("自己改规则"), FontSize = 13.5, Foreground = Th.Mute, Cursor = Cursors.Hand, Margin = new Thickness(0, 16, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = Ui.Tip(Th, L.T("复制要加的两段，打开访问规则自己贴进去")) };
+            var label = new TextBlock { Text = L.T("手动修改访问控制"), FontSize = 13.5, Foreground = Th.Mute, Cursor = Cursors.Hand, Margin = new Thickness(0, 16, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = Ui.Tip(Th, L.T("复制以下两段配置，然后打开访问控制手动粘贴。")) };
             label.MouseEnter += delegate { label.TextDecorations = TextDecorations.Underline; label.Foreground = Th.Fg; };
             label.MouseLeave += delegate { label.TextDecorations = null; label.Foreground = Th.Mute; };
             label.MouseLeftButtonUp += delegate
             {
-                if (!Ui.CopyText(Acl)) { label.Text = L.T("复制没成功，再点一次"); return; }   // 别贴进去别的东西
-                label.Text = L.T("已复制，贴进打开的规则里");
+                if (!Ui.CopyText(Acl)) { label.Text = L.T("复制失败，请重试。"); return; }   // 别贴进去别的东西
+                label.Text = L.T("已复制，请粘贴到已打开的访问控制中。");
                 OpenUrl(Api.RulesPage);
             };
             return label;
@@ -437,15 +440,15 @@ namespace TailOrbit
                 Ui.After(470, () =>
                 {
                     if (stage != "wait") return;
-                    keyPop.BeginAnimation(ScaleTransform.ScaleXProperty, swing);
-                    keyPop.BeginAnimation(ScaleTransform.ScaleYProperty, swing);
+                    Ui.Loop(keyDisc, keyPop, ScaleTransform.ScaleXProperty, swing);
+                    Ui.Loop(keyDisc, keyPop, ScaleTransform.ScaleYProperty, swing);
                 });
                 clip.Start();
                 return;
             }
             clip.Stop();
-            keyPop.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            keyPop.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            Ui.Unloop(keyPop, ScaleTransform.ScaleXProperty);
+            Ui.Unloop(keyPop, ScaleTransform.ScaleYProperty);
             keyPop.ScaleX = keyPop.ScaleY = 1;   // 撤掉呼吸后底值还是弹出时的 0.3，不改回 1 钥匙会突然缩小
             if (stage != "work") Ui.AnimTo(keyDisc, OpacityProperty, 0, 200);
         }
@@ -471,7 +474,7 @@ namespace TailOrbit
             try { if (Clipboard.ContainsText() && Clipboard.GetText().Contains(token)) Clipboard.Clear(); }
             catch (System.Runtime.InteropServices.COMException) { }
             failure = null;
-            working = L.T("正在读访问规则");
+            working = L.T("正在读取访问控制…");
             Step("work", false);   // 先进 work 再停等待：Waiting(false) 看到 work 就不会把钥匙提前淡掉
             Waiting(false);
             // 钥匙飞进锁里
@@ -487,14 +490,14 @@ namespace TailOrbit
             Action<int> progress = k => Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (stage != "work") return;
-                working = k == 1 ? L.T("正在读访问规则") : k == 2 ? L.T("正在加上云盘那两段") : L.T("正在作废这把令牌");
+                working = k == 1 ? L.T("正在读取访问控制…") : k == 2 ? L.T("正在添加云盘配置…") : L.T("正在撤销令牌…");
                 Step("work", false);
             }));
             string err;
             bool revoked = false;
             try { err = await Task.Run(() => { bool r; string e = Api.EnableDrive(token, progress, out r); revoked = r; return e; }); }
             catch (Exception e) { err = e.Message; }   // 没想到的错也要回到能重来的状态，不能卡在转圈
-            string keep = revoked ? null : L.T("令牌没能自动作废，请到 Tailscale 后台的密钥页手动删掉。");
+            string keep = revoked ? null : L.T("无法自动撤销令牌，请在 Tailscale 管理控制台的“Keys”页面中手动删除。");
             if (err != null)
             {
                 failure = keep == null ? err : err + "\n" + keep;
@@ -502,9 +505,9 @@ namespace TailOrbit
                 Waiting(true);
                 return;
             }
-            if (keep != null) Host.Notify(L.T("云盘开通了"), keep);
+            if (keep != null) Host.Notify(L.T("云盘已开通"), keep);
             // 规则存上了：Tailscale 把新权限推到本机要几秒，等 drive list 不再报没开通
-            working = L.T("等本机拿到新权限");
+            working = L.T("等待本机获取新权限…");
             Step("work", false);
             for (int i = 0; i < 20; i++)
             {
@@ -513,7 +516,7 @@ namespace TailOrbit
                 await Task.Delay(1500);
             }
             // 不用再要令牌了：回到开头那一步（写着原因），再进这页会重新读，开通了就直接显示
-            failure = L.T("规则已经改好了，本机还没拿到新权限。过一会儿再打开这页看看。");
+            failure = L.T("访问控制已更新，但本机尚未获取新权限。请稍后重新打开此页面。");
             Step("idle", false);
         }
 
@@ -560,7 +563,7 @@ namespace TailOrbit
 
             // 左边：本机共享出去的
             var left = new StackPanel();
-            left.Children.Add(Head(L.T("我共享出去的")));
+            left.Children.Add(Head(L.T("我共享的")));
             foreach (var m in d.Mine)
             {
                 var item = m;
@@ -570,13 +573,13 @@ namespace TailOrbit
             }
             var hint = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             hint.Children.Add(new IconView("folder-plus", 26, Th.Mute) { HorizontalAlignment = HorizontalAlignment.Center });
-            hint.Children.Add(new TextBlock { Text = L.T("把文件夹拖到这里共享"), FontSize = 14, Foreground = Th.Mute, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center });
+            hint.Children.Add(new TextBlock { Text = L.T("将文件夹拖到此处以共享"), FontSize = 14, Foreground = Th.Mute, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center });
             drop = new Border { Height = 132, Margin = new Thickness(0, d.Mine.Count > 0 ? 4 : 0, 0, 0), CornerRadius = new CornerRadius(14), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Kit.Dashed(Th, hint, 14) };
             drop.MouseEnter += delegate { if (!lifted) drop.Background = Th.Wash; };
             drop.MouseLeave += delegate { if (!lifted) drop.Background = Brushes.Transparent; };
             drop.MouseLeftButtonUp += delegate
             {
-                string path = FolderDialog.Pick(Window.GetWindow(this), L.T("选一个文件夹共享出去"));
+                string path = FolderDialog.Pick(Window.GetWindow(this), L.T("选择要共享的文件夹"));
                 if (path != null) Share(new List<string> { path });
             };
             left.Children.Add(drop);
@@ -584,7 +587,7 @@ namespace TailOrbit
 
             // 右边：别的设备共享的
             var right = new StackPanel();
-            right.Children.Add(Head(L.T("别的设备的")));
+            right.Children.Add(Head(L.T("其他设备共享的")));
             foreach (var r in d.Remotes)
             {
                 var card = new StackPanel();
@@ -609,7 +612,7 @@ namespace TailOrbit
             }
             if (d.Remotes.Count == 0)
             {
-                string why = d.Away == null ? L.T("别的设备还没共享文件夹") : L.T("列不出别的设备的共享：{0}", d.Away);
+                string why = d.Away == null ? L.T("其他设备暂未共享文件夹") : L.T("无法列出其他设备的共享：{0}", d.Away);
                 var t = Kit.Text(why, 14, Th.Mute);
                 t.Margin = new Thickness(18, 0, 18, 0);
                 t.TextWrapping = TextWrapping.Wrap;
@@ -678,7 +681,7 @@ namespace TailOrbit
             {
                 string name = NameFor(path), dir = path;
                 var r = await Task.Run(() => Tailscale.Run("drive share " + Quote(name) + " " + Quote(dir)));
-                if (r.Code != 0) Host.Notify(L.T("没共享成：{0}", System.IO.Path.GetFileName(path.TrimEnd('\\'))), Tailscale.FirstLine(r.Err, L.T("tailscale drive share 失败")));
+                if (r.Code != 0) Host.Notify(L.T("无法共享“{0}”", System.IO.Path.GetFileName(path.TrimEnd('\\'))), Tailscale.FirstLine(r.Err, L.T("tailscale drive share 执行失败")));
                 else mine.Add(new Mine { Name = name, Path = path });
             }
             Load();
@@ -687,7 +690,7 @@ namespace TailOrbit
         async void Unshare(string name)
         {
             var r = await Task.Run(() => Tailscale.Run("drive unshare " + Quote(name)));
-            if (r.Code != 0) Host.Notify(L.T("没停掉共享：{0}", name), Tailscale.FirstLine(r.Err, L.T("tailscale drive unshare 失败")));
+            if (r.Code != 0) Host.Notify(L.T("无法停止共享“{0}”", name), Tailscale.FirstLine(r.Err, L.T("tailscale drive unshare 执行失败")));
             Load();
         }
 

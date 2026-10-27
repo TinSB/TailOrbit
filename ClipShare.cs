@@ -52,7 +52,7 @@ namespace TailOrbit
         {
             if (on && FileServer.Error != null) return FileServer.Error;
             var r = Tailscale.Run("serve status --json");
-            if (r.Code != 0) return Tailscale.FirstLine(r.Err, L.T("没改成"));
+            if (r.Code != 0) return Tailscale.FirstLine(r.Err, L.T("更改失败"));
             var mounted = new List<string>();
             var web = Tailscale.Get(Tailscale.Json(r.Out), "Web") as Dictionary<string, object>;
             if (web != null)
@@ -67,7 +67,7 @@ namespace TailOrbit
             if (!mounted.Contains(Mount))
             {
                 var a = Tailscale.Run("serve --bg --yes --https=" + Shares.PrivatePort + " --set-path=" + Mount + " http://127.0.0.1:" + FileServer.Port + Mount);
-                if (a.Code != 0) return Tailscale.FirstLine(a.Err, L.T("没改成"));
+                if (a.Code != 0) return Tailscale.FirstLine(a.Err, L.T("更改失败"));
             }
             var self = Tailscale.Get(Status(), "Self") as Dictionary<string, object>;
             Url = "https://" + ((Tailscale.Get(self, "DNSName") as string) ?? "").TrimEnd('.') + ":" + Shares.PrivatePort + Mount + "/";
@@ -91,7 +91,7 @@ namespace TailOrbit
             bool head = method == "HEAD";
             if (!Settings.ClipOn || parts.Length < 3 || !Same(parts[2], Settings.ClipKey) || headers.ContainsKey("Tailscale-Funnel-Request") || (tail != null && tail != "" && tail != "raw"))
             {
-                Fail(s, 404, "剪贴板互通没开，或者链接不对。", head);
+                Fail(s, 404, "剪贴板互通未开启，或链接无效。", head);
                 return;
             }
             if (tail == null) { FileServer.Redirect(s, Uri.EscapeDataString(parts[2]) + "/"); return; }
@@ -100,7 +100,7 @@ namespace TailOrbit
             string login;
             if (!headers.TryGetValue("Tailscale-User-Login", out login) || !string.Equals(login, Owner(status), StringComparison.OrdinalIgnoreCase))
             {
-                Fail(s, 403, "只有登录了同一个 Tailscale 账号的设备能看。", head);
+                Fail(s, 403, "仅限已登录同一 Tailscale 账号的设备查看。", head);
                 return;
             }
             string ip;
@@ -114,7 +114,7 @@ namespace TailOrbit
             FileServer.Head(s, 200, (tail == "raw" ? "text/plain" : "text/html") + "; charset=utf-8", body.Length, "", "no-store");
             if (head) return;
             s.Write(body, 0, body.Length);
-            Tell(L.T("{0} 读了这台电脑的剪贴板", from), L.T("{0} 个字", text.Length), ip, false);
+            Tell(L.T("{0} 读取了本机剪贴板", from), L.T("{0} 个字符", text.Length), ip, false);
         }
 
         static void Receive(Stream s, Dictionary<string, string> headers, byte[] rest, string from, string ip)
@@ -136,7 +136,7 @@ namespace TailOrbit
             if (text == "") { FileServer.Head(s, 204, "text/plain; charset=utf-8", 0, ""); return; }
             if (!Application.Current.Dispatcher.Invoke<bool>(() => Ui.CopyText(Windows(text)))) { FileServer.Head(s, 503, "text/plain; charset=utf-8", 0, ""); return; }
             FileServer.Head(s, 200, "text/plain; charset=utf-8", 0, "");
-            Tell(L.T("{0} 发来了剪贴板", from), L.T("{0} 个字，可以直接粘贴", text.Length), ip, true);
+            Tell(L.T("收到来自 {0} 的剪贴板内容", from), L.T("{0} 个字符，可直接粘贴", text.Length), ip, true);
         }
 
         // 在界面线程上调：WPF 的剪贴板只能在单线程套间里用。别的程序正开着剪贴板时稍等再试；没有文字返回 null。
@@ -203,7 +203,7 @@ namespace TailOrbit
             nodes.Add(Tailscale.Get(status, "Self") as Dictionary<string, object>);
             string at = ip;
             var node = nodes.FirstOrDefault(n => n != null && ((Tailscale.Get(n, "TailscaleIPs") as object[]) ?? new object[0]).Contains(at));
-            return node != null ? Tailscale.ShortName(node) : L.T("一台设备");
+            return node != null ? Tailscale.ShortName(node) : L.T("未知设备");
         }
 
         static void Tell(string title, string text, string ip, bool inward)
@@ -217,7 +217,7 @@ namespace TailOrbit
 
         static void Fail(Stream s, int code, string why, bool head)
         {
-            var body = Encoding.UTF8.GetBytes(FileServer.Page(FileServer.Say("打不开"), FileServer.Say(why), ""));
+            var body = Encoding.UTF8.GetBytes(FileServer.Page(FileServer.Say("无法打开"), FileServer.Say(why), ""));
             FileServer.Head(s, code, "text/html; charset=utf-8", body.Length, "");
             if (!head) s.Write(body, 0, body.Length);
         }
@@ -245,16 +245,16 @@ namespace TailOrbit
                 "<pre id=\"t\"></pre><div class=\"meta\" id=\"m\"></div>" +
                 "<button class=\"btn main\" id=\"copy\"></button><button class=\"btn sub\" id=\"send\"></button><div class=\"note\" id=\"n\"></div>" +
                 "<script>(function(){var T=" + js.Serialize(text) + ",$=function(i){return document.getElementById(i)},say=function(s){$('n').textContent=s};" +
-                "if(T){$('t').textContent=T;$('m').textContent=" + js.Serialize(FileServer.Say("{0} 个字", "#")) + ".replace('#',T.length)}" +
-                "else{$('t').textContent=" + say("剪贴板里没有文字") + ";$('t').className='empty';$('copy').style.display='none'}" +
-                "$('copy').textContent=" + say("复制") + ";$('send').textContent=" + say("把我的剪贴板发过去") + ";" +
+                "if(T){$('t').textContent=T;$('m').textContent=" + js.Serialize(FileServer.Say("{0} 个字符", "#")) + ".replace('#',T.length)}" +
+                "else{$('t').textContent=" + say("剪贴板中没有文本") + ";$('t').className='empty';$('copy').style.display='none'}" +
+                "$('copy').textContent=" + say("复制") + ";$('send').textContent=" + say("发送我的剪贴板") + ";" +
                 // 先用老办法（选中一个隐藏的文本框再“复制”）：要在点按的那一下里同步做，不少浏览器、内嵌网页不给新接口写剪贴板
                 "var old=function(){var a=document.createElement('textarea');a.value=T;a.setAttribute('readonly','');a.style.cssText='position:fixed;top:0;opacity:0';" +
                 "document.body.appendChild(a);a.select();a.setSelectionRange(0,T.length);var ok=false;try{ok=document.execCommand('copy')}catch(e){}document.body.removeChild(a);return ok};" +
-                "$('copy').onclick=function(){var yes=function(){say(" + say("已复制") + ")},no=function(){say(" + say("没复制成，长按上面的字自己复制") + ")};" +
+                "$('copy').onclick=function(){var yes=function(){say(" + say("已复制") + ")},no=function(){say(" + say("复制失败，请长按上方文字手动复制。") + ")};" +
                 "if(old())yes();else if(navigator.clipboard)navigator.clipboard.writeText(T).then(yes,no);else no()};" +
-                "$('send').onclick=function(){navigator.clipboard.readText().then(function(x){if(!x){say(" + say("剪贴板里没有文字") + ");return}" +
-                "return fetch('raw',{method:'POST',body:x}).then(function(r){say(r.ok?" + say("已发过去") + ":" + say("没发成") + ")})}).catch(function(){say(" + say("没发成") + ")})};" +
+                "$('send').onclick=function(){navigator.clipboard.readText().then(function(x){if(!x){say(" + say("剪贴板中没有文本") + ");return}" +
+                "return fetch('raw',{method:'POST',body:x}).then(function(r){say(r.ok?" + say("已发送") + ":" + say("发送失败") + ")})}).catch(function(){say(" + say("发送失败") + ")})};" +
                 "})()</script>";
             return FileServer.Page(FileServer.Say("{0} 的剪贴板", pc), null, body);
         }
@@ -271,7 +271,7 @@ namespace TailOrbit
         {
             var snap = await Task.Run(() => Tailscale.Load());
             var mac = snap.Devices.FirstOrDefault(Readable);
-            if (mac == null) host.Notify(L.T("没有能读剪贴板的 Mac"), L.T("要 Mac 在线、开着远程登录，并且 ssh 配置里有它。"));
+            if (mac == null) host.Notify(L.T("未找到可读取剪贴板的 Mac"), L.T("Mac 需要在线、已开启“远程登录”，并已添加到 SSH 配置中。"));
             else Pull(mac);
         }
 
@@ -280,10 +280,10 @@ namespace TailOrbit
         {
             string target = Ssh.Target(mac), text = null;
             string why = await Task.Run(() => Pbpaste(target, out text));
-            if (why == null && text == "") why = L.T("{0} 的剪贴板里没有文字", mac.Name);
-            if (why == null && !Ui.CopyText(Windows(text))) why = L.T("剪贴板被占用，再试一次");
-            if (why != null) { host.Notify(L.T("没读到 {0} 的剪贴板", mac.Name), why); return; }
-            host.Notify(L.T("读到了 {0} 的剪贴板", mac.Name), L.T("{0} 个字，可以直接粘贴", text.Length), true);
+            if (why == null && text == "") why = L.T("{0} 的剪贴板中没有文本", mac.Name);
+            if (why == null && !Ui.CopyText(Windows(text))) why = L.T("剪贴板正被其他程序占用，请重试。");
+            if (why != null) { host.Notify(L.T("无法读取 {0} 的剪贴板", mac.Name), why); return; }
+            host.Notify(L.T("已读取 {0} 的剪贴板", mac.Name), L.T("{0} 个字符，可直接粘贴", text.Length), true);
             host.ClipFlow(mac.Ip, true);
         }
 
@@ -298,7 +298,7 @@ namespace TailOrbit
             };
             Process p;
             try { p = Process.Start(psi); }
-            catch (Win32Exception) { return L.T("这台电脑没装 ssh"); }
+            catch (Win32Exception) { return L.T("本机未安装 SSH"); }
             using (p)
             {
                 var output = p.StandardOutput.ReadToEndAsync();
@@ -308,9 +308,9 @@ namespace TailOrbit
                     try { p.Kill(); }
                     catch (InvalidOperationException) { }
                     catch (Win32Exception) { }
-                    return L.T("对方没回应");
+                    return L.T("对方无响应");
                 }
-                if (p.ExitCode != 0) return Tailscale.FirstLine(err.Result, L.T("ssh 没连上"));
+                if (p.ExitCode != 0) return Tailscale.FirstLine(err.Result, L.T("SSH 连接失败"));
                 text = output.Result;
                 return null;
             }

@@ -170,7 +170,7 @@ namespace TailOrbit
 
         void Apply(List<ServeEntry> list)
         {
-            error = list == null ? L.T("读不到") : null;
+            error = list == null ? L.T("无法读取") : null;
             var seen = new HashSet<string>();
             var added = new List<Sat>();
             foreach (var e in list ?? new List<ServeEntry>())
@@ -274,11 +274,11 @@ namespace TailOrbit
             s.Flowing = on;
             if (on)
             {
-                s.Flow.BeginAnimation(Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, -22 / 3.2, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
+                Ui.Loop(s.Flow, s.Flow, Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, -22 / 3.2, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
                 Ui.AnimTo(s.Flow, OpacityProperty, 0.9, 300);
                 return;
             }
-            s.Flow.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
+            Ui.Unloop(s.Flow, Shape.StrokeDashOffsetProperty);
             s.Flow.BeginAnimation(OpacityProperty, null);
             s.Flow.Opacity = 0;
         }
@@ -543,15 +543,15 @@ namespace TailOrbit
             if (on)
             {
                 var grow = new DoubleAnimation(1, 1.7, TimeSpan.FromMilliseconds(1200)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = Ui.Ease };
-                haloScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-                haloScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-                halo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1200)) { RepeatBehavior = RepeatBehavior.Forever });
+                Ui.Loop(halo, haloScale, ScaleTransform.ScaleXProperty, grow);
+                Ui.Loop(halo, haloScale, ScaleTransform.ScaleYProperty, grow);
+                Ui.Loop(halo, halo, OpacityProperty, new DoubleAnimation(0.55, 0, TimeSpan.FromMilliseconds(1200)) { RepeatBehavior = RepeatBehavior.Forever });
                 return;
             }
-            halo.BeginAnimation(OpacityProperty, null);
+            Ui.Unloop(halo, OpacityProperty);
             halo.Opacity = 0;
-            haloScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            haloScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            Ui.Unloop(haloScale, ScaleTransform.ScaleXProperty);
+            Ui.Unloop(haloScale, ScaleTransform.ScaleYProperty);
         }
 
         void PaintDrop()
@@ -630,13 +630,13 @@ namespace TailOrbit
 
         void PickFiles()
         {
-            var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = L.T("选要分享的文件") };
+            var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = L.T("选择要分享的文件") };
             if (dlg.ShowDialog(Window.GetWindow(this)) == true) AddMany(dlg.FileNames.ToList());
         }
 
         void PickFolder()
         {
-            string dir = FolderDialog.Pick(Window.GetWindow(this), L.T("选要分享的文件夹"));
+            string dir = FolderDialog.Pick(Window.GetWindow(this), L.T("选择要分享的文件夹"));
             if (dir != null) AddMany(new List<string> { dir });
         }
 
@@ -701,7 +701,7 @@ namespace TailOrbit
                 texts.Children.Add(s);
             }
             if (!running) return Ui.Columns(1, box, texts);
-            var dot = new Ellipse { Width = 10, Height = 10, Fill = Th.Ok, VerticalAlignment = VerticalAlignment.Center, ToolTip = Ui.Tip(Th, L.T("在运行")) };
+            var dot = new Ellipse { Width = 10, Height = 10, Fill = Th.Ok, VerticalAlignment = VerticalAlignment.Center, ToolTip = Ui.Tip(Th, L.T("运行中")) };
             return Ui.Columns(1, box, texts, dot);
         }
 
@@ -726,7 +726,7 @@ namespace TailOrbit
                 g.Stroke = Th.Ok;
                 Ui.After(1200, () => { g.Show("copy"); g.Stroke = Th.Fg; });
             });
-            var open = Square("external", L.T("在浏览器里打开"), g => Open(url));
+            var open = Square("external", L.T("在浏览器中打开"), g => Open(url));
             open.Margin = new Thickness(6, 0, 0, 0);
             row.Child = Ui.Columns(0, text, copy, open);
             return row;
@@ -745,7 +745,7 @@ namespace TailOrbit
             };
             var t = new TextBlock
             {
-                Text = e.Public ? L.T("手机扫一下就能打开") : L.T("登录了 Tailscale 的手机扫一下就能打开"), FontSize = 13.5, LineHeight = 22, Foreground = Th.Mute,
+                Text = e.Public ? L.T("使用手机扫码即可打开") : L.T("使用已登录 Tailscale 的手机扫码即可打开"), FontSize = 13.5, LineHeight = 22, Foreground = Th.Mute,
                 TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(18, 0, 0, 0)
             };
             return Ui.Columns(1, tile, t);
@@ -772,7 +772,7 @@ namespace TailOrbit
                 below.Children.Clear();
                 if (!e.Public && pending != e.Key)
                 {
-                    below.Children.Add(Note(L.T("只有你登录了 Tailscale 的设备能打开")));
+                    below.Children.Add(Note(L.T("仅限已登录你的 Tailscale 账号的设备访问")));
                     return;
                 }
                 int cur = e.Public ? TtlIndex(e.Mine) : pendingTtl;
@@ -789,7 +789,7 @@ namespace TailOrbit
                     }));
                 }
                 below.Children.Add(chips);
-                below.Children.Add(Note(L.T("拿到链接的人都能打开，到点自动关")));
+                below.Children.Add(Note(L.T("任何获得链接的人都可以访问，到期后自动关闭。")));
                 if (e.Public) return;
                 var go = Kit.Button(Th, L.T("公开 {0}", L.T(TtlNames[pendingTtl])), true, () => PublishShare(e, pendingTtl));
                 go.Margin = new Thickness(0, 16, 0, 0);
@@ -835,7 +835,7 @@ namespace TailOrbit
         FrameworkElement Facts(ServeEntry e)
         {
             var stack = new StackPanel();
-            stack.Children.Add(Kit.InfoRow(Th, L.T("谁能打开"), Kit.Text(e.Public ? L.T("所有人") : L.T("我的设备"), 14, Th.Fg)));
+            stack.Children.Add(Kit.InfoRow(Th, L.T("访问权限"), Kit.Text(e.Public ? L.T("所有人") : L.T("我的设备"), 14, Th.Fg)));
             stack.Children.Add(Kit.InfoRow(Th, L.T("端口"), Kit.Text(e.Port.ToString(), 14, Th.Fg)));
             var target = Kit.Mono(e.Target, 12.5, Th.Fg);
             target.MaxWidth = 250;
@@ -860,12 +860,12 @@ namespace TailOrbit
             var yes = new Border
             {
                 Height = 42, Margin = new Thickness(0, 0, 5, 0), CornerRadius = new CornerRadius(12), Background = Th.Bad, Cursor = Cursors.Hand,
-                Child = new TextBlock { Text = L.T("确定停止"), FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Th.Bg, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+                Child = new TextBlock { Text = L.T("确认停止"), FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Th.Bg, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
             };
             yes.MouseEnter += delegate { yes.Opacity = 0.88; };
             yes.MouseLeave += delegate { yes.Opacity = 1; };
             yes.MouseLeftButtonUp += delegate { StopShare(e); };
-            var no = Kit.Button(Th, L.T("先留着"), false, () =>
+            var no = Kit.Button(Th, L.T("取消"), false, () =>
             {
                 confirm = null;
                 FillStop(host, e);
@@ -885,12 +885,12 @@ namespace TailOrbit
         {
             bool can = FileServer.Error == null;
             var dock = new DockPanel();
-            var note = Note(L.T("新建的分享只有你的设备能打开"));
+            var note = Note(L.T("新建的分享仅限你的设备访问"));
             DockPanel.SetDock(note, Dock.Bottom);
             dock.Children.Add(note);
-            var files = Kit.Button(Th, L.T("选文件"), true, PickFiles);
+            var files = Kit.Button(Th, L.T("选择文件"), true, PickFiles);
             files.Margin = new Thickness(0, 0, 5, 0);
-            var folder = Kit.Button(Th, L.T("选文件夹"), false, PickFolder);
+            var folder = Kit.Button(Th, L.T("选择文件夹"), false, PickFolder);
             folder.Margin = new Thickness(5, 0, 0, 0);
             var buttons = new UniformGrid { Columns = 2, Margin = new Thickness(0, 16, 0, 0) };
             buttons.Children.Add(files);
@@ -908,7 +908,7 @@ namespace TailOrbit
                 dock.Children.Add(w);
             }
             dropIcon = new IconView("folder-plus", 34, Th.Mute);
-            var hint = Kit.Text(L.T("拖到这里"), 15, Th.Fg);
+            var hint = Kit.Text(L.T("拖放到此处"), 15, Th.Fg);
             hint.HorizontalAlignment = HorizontalAlignment.Center;
             hint.Margin = new Thickness(0, 14, 0, 0);
             var inside = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -932,8 +932,8 @@ namespace TailOrbit
         FrameworkElement ErrorView()
         {
             var stack = new StackPanel();
-            stack.Children.Add(Header("alert", L.T("读不到分享设置"), L.T("Tailscale 没在运行，或者还没登录"), Th.Mute, false));
-            var retry = Kit.Button(Th, L.T("再试一次"), false, Load);
+            stack.Children.Add(Header("alert", L.T("无法读取分享设置"), L.T("Tailscale 未运行或未登录。"), Th.Mute, false));
+            var retry = Kit.Button(Th, L.T("重试"), false, Load);
             retry.Margin = new Thickness(0, 22, 0, 0);
             retry.HorizontalAlignment = HorizontalAlignment.Left;
             stack.Children.Add(retry);
@@ -1003,8 +1003,8 @@ namespace TailOrbit
             if (e.Dead != "") return e.Dead;
             if (e.Mine != null) return Size(e.Mine.Source);
             if (e.Kind == "path") return Size(e.Target);
-            if (e.Kind == "tcp") return L.T("转到 {0}", e.Target);
-            return e.Kind == "proxy" && e.Program != "" && e.LocalPort > 0 ? L.T("本机 {0} 端口", e.LocalPort) : "";
+            if (e.Kind == "tcp") return L.T("转发到 {0}", e.Target);
+            return e.Kind == "proxy" && e.Program != "" && e.LocalPort > 0 ? L.T("本机端口 {0}", e.LocalPort) : "";
         }
 
         static string Size(string path)
@@ -1016,10 +1016,10 @@ namespace TailOrbit
 
         static string Left(TimeSpan t)
         {
-            if (t.TotalMinutes < 1) return L.T("马上关");
-            if (t.TotalMinutes < 60) return L.T("{0} 分钟后关", Math.Ceiling(t.TotalMinutes));
-            if (t.TotalHours < 23.5) return L.T("{0} 小时后关", Math.Max(1, Math.Round(t.TotalHours)));
-            return L.T("1 天后关");
+            if (t.TotalMinutes < 1) return L.T("即将关闭");
+            if (t.TotalMinutes < 60) return L.T("{0} 分钟后关闭", Math.Ceiling(t.TotalMinutes));
+            if (t.TotalHours < 23.5) return L.T("{0} 小时后关闭", Math.Max(1, Math.Round(t.TotalHours)));
+            return L.T("1 天后关闭");
         }
 
         // 公开了多久：离哪个选项最近就算哪个
@@ -1147,13 +1147,13 @@ namespace TailOrbit
             Children.Add(cut);
             tag = new TextBlock { Text = endLabel, FontFamily = Ui.MonoFont, FontSize = 12, Foreground = th.Mute };
             Children.Add(tag);
+            // 宽度变了：光点的起点终点跟着换，重新起一遍（看不见时 Ui.Loop 先不跑，看得见了再跑）
             SizeChanged += delegate
             {
                 Place();
-                Run(false);   // 宽度变了：光点的起点终点跟着换
-                Run(IsVisible);
+                Run(false);
+                Run(true);
             };
-            IsVisibleChanged += delegate { Run(IsVisible && ActualWidth > 0); };
         }
 
         void Place()
@@ -1193,10 +1193,10 @@ namespace TailOrbit
                 var move = (TranslateTransform)tg.Children[1];
                 if (!on)
                 {
-                    move.BeginAnimation(TranslateTransform.XProperty, null);
-                    d.BeginAnimation(OpacityProperty, null);
-                    scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-                    scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                    Ui.Unloop(move, TranslateTransform.XProperty);
+                    Ui.Unloop(d, OpacityProperty);
+                    Ui.Unloop(scale, ScaleTransform.ScaleXProperty);
+                    Ui.Unloop(scale, ScaleTransform.ScaleYProperty);
                     d.Opacity = 0;
                     continue;
                 }
@@ -1205,26 +1205,26 @@ namespace TailOrbit
                 x.KeyFrames.Add(new LinearDoubleKeyFrame(x0, KeyTime.FromPercent(0)));
                 x.KeyFrames.Add(new LinearDoubleKeyFrame(xCut - 13, KeyTime.FromPercent(0.8)));
                 x.KeyFrames.Add(new DiscreteDoubleKeyFrame(xCut - 13, KeyTime.FromPercent(1)));
-                move.BeginAnimation(TranslateTransform.XProperty, x);
+                Ui.Loop(d, move, TranslateTransform.XProperty, x);
                 var o = Loop(begin);
                 o.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromPercent(0)));
                 o.KeyFrames.Add(new LinearDoubleKeyFrame(0.9, KeyTime.FromPercent(0.1)));
                 o.KeyFrames.Add(new LinearDoubleKeyFrame(0.9, KeyTime.FromPercent(0.8)));
                 o.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromPercent(0.95)));
                 o.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromPercent(1)));
-                d.BeginAnimation(OpacityProperty, o);
+                Ui.Loop(d, d, OpacityProperty, o);
                 var k = Loop(begin);
                 k.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(0)));
                 k.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(0.8)));
                 k.KeyFrames.Add(new EasingDoubleKeyFrame(2.6, KeyTime.FromPercent(0.95), Ui.Ease));
                 k.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(1)));
-                scale.BeginAnimation(ScaleTransform.ScaleXProperty, k);
-                scale.BeginAnimation(ScaleTransform.ScaleYProperty, k);
+                Ui.Loop(d, scale, ScaleTransform.ScaleXProperty, k);
+                Ui.Loop(d, scale, ScaleTransform.ScaleYProperty, k);
             }
             if (!on)
             {
-                cutPop.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-                cutPop.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                Ui.Unloop(cutPop, ScaleTransform.ScaleXProperty);
+                Ui.Unloop(cutPop, ScaleTransform.ScaleYProperty);
                 return;
             }
             // 每颗光点撞到断口时红叉跳一下：第一颗在 0.8 个周期时到，之后每三分之一周期到一颗
@@ -1232,8 +1232,8 @@ namespace TailOrbit
             p.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(0)));
             p.KeyFrames.Add(new EasingDoubleKeyFrame(1.3, KeyTime.FromPercent(0.18), Ui.Ease));
             p.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromPercent(0.7), Ui.Ease));
-            cutPop.BeginAnimation(ScaleTransform.ScaleXProperty, p);
-            cutPop.BeginAnimation(ScaleTransform.ScaleYProperty, p);
+            Ui.Loop(cut, cutPop, ScaleTransform.ScaleXProperty, p);
+            Ui.Loop(cut, cutPop, ScaleTransform.ScaleYProperty, p);
         }
 
         static DoubleAnimationUsingKeyFrames Loop(TimeSpan begin)

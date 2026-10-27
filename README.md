@@ -30,7 +30,7 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 发文件有三种办法：
 
 - 把文件拖进窗口，对准一台设备松手；
-- 点一台设备，选「发文件」；
+- 点一台设备，选「发送文件」；
 - 在资源管理器里选中文件，按 `Ctrl+Alt+A`，再按设备前面的数字键。
 
 文件夹会先打成 zip 再发。发送时设备外面转一圈进度，鼠标移上去会出现 ×，点了就取消；送到了设备变绿打勾，失败了连线变红。
@@ -39,22 +39,22 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 ### 点一下设备
 
-点一台设备，四周会弹出一圈按钮：开终端（用你在 `~/.ssh/config` 里给它起的别名）、发文件、复制域名、在浏览器里打开它的网页（它开着网页端口才有）、读它的剪贴板（只有 Mac 有），还有「掉线时提醒我」：打开后，它掉线和恢复时 Windows 都会弹个通知。
+点一台设备，四周会弹出一圈按钮：开终端（用你在 `~/.ssh/config` 里给它起的别名）、发文件、复制域名、在浏览器里打开它的网页（它开着网页端口才有）、读它的剪贴板（只有 Mac 有），还有「离线时提醒我」：打开后，它掉线和恢复时 Windows 都会弹个通知。
 
-点设备的名字会复制它的 IP；点中间这台电脑会打开「下载」文件夹，Tailscale 收到的文件都放在那里。关掉窗口只是缩回托盘。右键托盘图标是一个小菜单：「发文件」「收到的文件」（找到最近收到的那个）、「终端」（指着它列出能连的设备），两个剪贴板开关也在这里，最下面是「退出」。
+点设备的名字会复制它的 IP；点中间这台电脑会打开「下载」文件夹，Tailscale 收到的文件都放在那里。关掉窗口只是缩回托盘。右键托盘图标是一个小菜单：「发送文件」「已接收的文件」（找到最近收到的那个）、「终端」（指着它列出能连的设备），两个剪贴板开关也在这里，最下面是「退出」。
 
 ### 剪贴板
 
 「本机」页上有两个跟剪贴板有关的开关。
 
-**剪贴板互通**是给手机用的。打开后会弹出一个二维码，用登录了 Tailscale 的手机扫一下，网页上就是这台电脑剪贴板里的字，点「复制」就拿到了；点「把我的剪贴板发过去」，手机上的字就到了电脑上。
+**剪贴板互通**是给手机用的。打开后会弹出一个二维码，用登录了 Tailscale 的手机扫一下，网页上就是这台电脑剪贴板里的字，点「复制」就拿到了；点「发送我的剪贴板」，手机上的字就到了电脑上。
 
 嫌扫码麻烦，可以在 iPhone 的「快捷指令」里做两个，再到「设置 → 辅助功能 → 触控 → 轻点背面」里绑上：
 
 - 拿电脑的：「获取 URL 内容」（网址就是二维码里那个，末尾加上 `raw`）→「拷贝至剪贴板」。电脑剪贴板里是图片时这个网址拿不到字，中间最好加一个「如果…有任何值」，不然会把手机剪贴板清空。
 - 发给电脑：「获取剪贴板」→「文本」→「获取 URL 内容」，方法选 POST，请求体选「文件」，放进上一步的文本。
 
-**和 Mac 共用剪贴板**是给 Mac 用的。打开后，这台电脑和 Mac 就像在用同一个剪贴板：在哪边复制，两边都能粘贴。文字和图片（比如截图）都传，复制文件不传；超过 32 MB 的图片也不传，会弹个通知，这种用「发文件」发。它用 `~/.ssh/config` 里 Mac 的别名连过去，所以 Mac 要打开「远程登录」，Mac 上不用装任何东西。开关旁边的小电脑亮着，说明连上了。Mac 合盖睡着时会断开，醒来后自动连回，中间复制过的东西会补过去。如果 iPhone 和 Mac 登录的是同一个 Apple 账号、也开着接力，iPhone 上复制的东西也会经 Mac 一起过来。
+**与 Mac 共享剪贴板**是给 Mac 用的。打开后，这台电脑和 Mac 就像在用同一个剪贴板：在哪边复制，两边都能粘贴。文字和图片（比如截图）都传，复制文件不传；超过 32 MB 的图片也不传，会弹个通知，这种用「发送文件」发。它用 `~/.ssh/config` 里 Mac 的别名连过去，所以 Mac 要打开「远程登录」，Mac 上不用装任何东西。开关旁边的小电脑亮着，说明连上了。Mac 合盖睡着时会断开，醒来后自动连回，中间复制过的东西会补过去。如果 iPhone 和 Mac 登录的是同一个 Apple 账号、也开着接力，iPhone 上复制的东西也会经 Mac 一起过来。
 
 不想一直同步的话，也可以只在需要时按 `Win+Alt+V`，把 Mac 剪贴板里的字读到这台电脑上。
 
@@ -63,15 +63,17 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 ### 其他几页
 
 - **分享**：把文件或文件夹拖进来，会生成一个只有你自己的设备能打开的链接和二维码；需要的话可以公开到互联网 15 分钟、1 小时或 1 天，时间到了自动关。你用 `tailscale serve`、`funnel` 挂着的东西也都在这页，背后的程序停了会标红。
-- **网络**：每台设备是直连还是中继、延迟多少、现在传得多快；右边是网络体检和需要处理的问题。
-- **云盘**：就是 Tailscale 的 Taildrive。还没开通的话点「一键开通」，照提示在 Tailscale 后台生成一把令牌、点 Copy，TailOrbit 会替你在访问规则里加上需要的两条，用完马上把这把令牌作废。不想交出令牌也行，点「自己改规则」，要加的内容已经替你复制好了。开通以后，把文件夹拖进来就共享给了自己的其他设备，别的设备共享的文件夹也能直接打开。
-- **本机**：这台电脑在 Tailscale 里的名字、地址和账号，出口节点和常用开关，还有开机自启、上面说的两个剪贴板开关和界面语言。
+- **网络**：每台设备是直连还是中继、延迟多少、现在传得多快；右边是网络检测和需要处理的问题。
+- **云盘**：就是 Tailscale 的 Taildrive。还没开通的话点「立即开通」，照提示在 Tailscale 后台生成一把令牌、点 Copy，TailOrbit 会替你在访问规则里加上需要的两条，用完马上把这把令牌作废。不想交出令牌也行，点「手动修改访问控制」，要加的内容已经替你复制好了。开通以后，把文件夹拖进来就共享给了自己的其他设备，别的设备共享的文件夹也能直接打开。
+- **本机**：这台电脑在 Tailscale 里的名字、地址和账号，出口节点和常用开关，还有「开机时自动启动」、上面说的两个剪贴板开关和界面语言。
 
 ### 安装
 
-需要 Windows 10（1903 或更新）或 Windows 11，并且装好、登录了 Tailscale。用的是系统自带的 .NET Framework 4.8，不用另装运行库。
+需要 Windows 10（1903 或更新）或 Windows 11。用的是系统自带的 .NET Framework 4.8，不用另装运行库。
 
-到 [Releases](https://github.com/TinSB/TailOrbit/releases) 下载最新的 `TailOrbit-Setup-版本号.exe`，双击，点「安装」。不用管理员权限，程序装在 `%LOCALAPPDATA%\Programs\TailOrbit`，开始菜单里会有它，开机自启默认打开。
+到 [Releases](https://github.com/TinSB/TailOrbit/releases) 下载最新的 `TailOrbit-Setup-版本号.exe`，双击，点「安装」。不用管理员权限，程序装在 `%LOCALAPPDATA%\Programs\TailOrbit`，开始菜单里会有它，「开机时自动启动」默认打开。
+
+电脑上还没装 Tailscale 的话，安装窗口里会多一个「同时安装 Tailscale」（默认打开）：TailOrbit 装好后从 Tailscale 官网下载对应处理器的安装包，确认是 Tailscale Inc. 签名、签名有效，再交给 Windows 安装（会弹一次管理员确认），装完打开 Tailscale 让你登录。这一步没装上也不影响 TailOrbit，主界面上同样有「安装 Tailscale」按钮。
 
 安装程序没有数字签名，第一次运行时 Windows 可能提示「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」就行。
 
@@ -92,13 +94,13 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 .\TailOrbit.exe
 ```
 
-用 `TailOrbit.exe --tray` 启动就只待在托盘里，开机自启就是这么启动的。程序同时只会开一个，再运行一次只会把已经开着的窗口叫到前面。
+用 `TailOrbit.exe --tray` 启动就只待在托盘里，「开机时自动启动」就是这么启动的。程序同时只会开一个，再运行一次只会把已经开着的窗口叫到前面。
 
 `.\release.ps1` 打出 `dist\TailOrbit-Setup-版本号.exe`。安装程序加 `--quiet` 就不弹窗口直接装好；`TailOrbit.exe --uninstall --quiet` 不弹窗口卸载，再加 `--purge` 连设置和记录一起删。
 
 ### 隐私
 
-TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。唯一的例外是云盘的「一键开通」：那一次会拿你给的令牌访问 Tailscale 官方的后台接口。
+TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有两处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；没装 Tailscale、你点了安装时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包。
 
 收发记录、分享列表和设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传，剪贴板的内容也不记录。
 
@@ -111,13 +113,14 @@ TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做�
 | 判断直连还是中继 | `tailscale ping` |
 | 发文件、看收发进度 | `tailscale file cp`；进度来自 `tailscale debug watch-ipn` |
 | 分享 | `tailscale serve`、`tailscale funnel`；文件由 TailOrbit 在 `127.0.0.1` 上开的小服务提供，Tailscale 只负责转发 |
-| 网络体检、流量 | `tailscale netcheck`、`tailscale metrics print` |
+| 网络检测、流量 | `tailscale netcheck`、`tailscale metrics print` |
 | 云盘 | `tailscale drive`；别的设备的共享通过 Tailscale 自带的 WebDAV（`100.100.100.100:8080`）读 |
-| 一键开通云盘 | 用你的令牌读出访问规则，只加两条，写回前确认这期间没人改过，最后把令牌作废 |
+| 开通云盘 | 用你的令牌读出访问规则，只加两条，写回前确认这期间没人改过，最后把令牌作废 |
 | 本机设置 | `tailscale get`、`tailscale set` |
 | 剪贴板互通 | `tailscale serve` 把 7443 端口上一个带随机码的地址转给本机的小服务，只放行你自己账号的设备 |
-| 读 Mac、和 Mac 共用剪贴板 | 经 `ssh` 在 Mac 上跑 `pbpaste` 和一个小脚本；Windows 这边靠系统发来的“剪贴板变了”的通知。两边写进去时都带个记号，不会来回打转 |
+| 读取 Mac 剪贴板、与 Mac 共享剪贴板 | 经 `ssh` 在 Mac 上跑 `pbpaste` 和一个小脚本；Windows 这边靠系统发来的“剪贴板变了”的通知。两边写进去时都带个记号，不会来回打转 |
 | 设备菜单里的「网页」 | 设备在线时先试连几个常见的网页端口，菜单一打开就知道有没有 |
+| 安装 Tailscale | 从 `pkgs.tailscale.com` 下载对应处理器的 MSI，用 Windows 验证 Authenticode 签名并确认签名者是 Tailscale Inc.，再用 `msiexec` 安装 |
 | 给桌面小组件用的本机接口 | 只听 `127.0.0.1:46214`，每次启动换一把随机令牌，存在 `%LOCALAPPDATA%\TailOrbit\island.json`；能列设备、发文件、看收发进度 |
 
 </details>
@@ -174,15 +177,17 @@ The clipboard only travels between your own devices: only devices signed in to y
 ### The other pages
 
 - **Share**: drop a file or folder here to get a link and QR code that only your devices can open. If you need to, make it public on the internet for 15 minutes, an hour or a day; it closes itself when time is up. Anything you already serve with `tailscale serve` or `funnel` shows up here too, and turns red if the program behind it has stopped.
-- **Network**: whether each device is direct or relayed, its latency and how fast it's transferring right now, plus a network check-up and anything that needs fixing.
-- **Drive**: Tailscale's Taildrive. If it isn't set up yet, click **Turn on Drive**, generate an access token in the Tailscale admin console when asked, and click Copy. TailOrbit adds the two entries Taildrive needs to your access rules and revokes the token right away. If you'd rather not hand over a token, choose **Edit access controls yourself**; the text to paste is already copied for you. Once it's on, drop a folder in to share it with your other devices, and open the folders they share.
+- **Network**: whether each device is direct or relayed, its latency and how fast it's transferring right now, plus a network check and anything that needs fixing.
+- **Drive**: Tailscale's Taildrive. If it isn't set up yet, click **Enable Drive**, generate an access token in the Tailscale admin console when asked, and click Copy. TailOrbit adds the two entries Taildrive needs to your access rules and revokes the token right away. If you'd rather not hand over a token, choose **Edit access controls manually**; the text to paste is already copied for you. Once it's on, drop a folder in to share it with your other devices, and open the folders they share.
 - **This PC**: this computer's name, addresses and account on Tailscale, the exit node and common switches, plus **Start with Windows**, the two clipboard switches and the interface language.
 
 ### Install
 
-You need Windows 10 (1903 or later) or Windows 11, with Tailscale installed and signed in. It runs on the .NET Framework 4.8 that comes with Windows, so there's nothing else to install.
+You need Windows 10 (1903 or later) or Windows 11. It runs on the .NET Framework 4.8 that comes with Windows, so there's nothing else to install.
 
 Download the latest `TailOrbit-Setup-<version>.exe` from [Releases](https://github.com/TinSB/TailOrbit/releases), double-click it and click **Install**. No admin rights needed: it goes into `%LOCALAPPDATA%\Programs\TailOrbit`, shows up in the Start menu, and starts with Windows unless you turn that off.
+
+If Tailscale isn't installed yet, the installer adds an **Also install Tailscale** option (on by default). After installing TailOrbit, it downloads the installer for your processor from the official Tailscale website, checks that it carries a valid signature from Tailscale Inc., and hands it to Windows to install (you'll see one administrator prompt), then opens Tailscale so you can sign in. If that step fails, TailOrbit still works, and the main window offers the same **Install Tailscale** button.
 
 The installer isn't code-signed, so the first time you run it Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
 
@@ -209,7 +214,7 @@ Run `TailOrbit.exe --tray` to start in the tray only; that's how **Start with Wi
 
 ### Privacy
 
-TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. The one exception is the one-click Drive setup, which uses the token you give it to call Tailscale's admin API once.
+TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are two exceptions: Drive setup uses the token you give it to call Tailscale's admin API once, and if Tailscale isn't installed and you choose to install it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`).
 
 Your history, shares and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. Clipboard contents aren't recorded either.
 
@@ -222,13 +227,14 @@ Your history, shares and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC
 | Tell direct from relayed | `tailscale ping` |
 | Send files and track progress | `tailscale file cp`; progress comes from `tailscale debug watch-ipn` |
 | Share | `tailscale serve`, `tailscale funnel`; files are served by a small TailOrbit server on `127.0.0.1`, and Tailscale only forwards to it |
-| Network check-up and traffic | `tailscale netcheck`, `tailscale metrics print` |
+| Network check and traffic | `tailscale netcheck`, `tailscale metrics print` |
 | Drive | `tailscale drive`; other devices' shares are read through Tailscale's built-in WebDAV (`100.100.100.100:8080`) |
-| One-click Drive setup | reads your access rules with the token, adds two entries, checks that nobody changed them in the meantime before writing back, then revokes the token |
+| Drive setup | reads your access rules with the token, adds two entries, checks that nobody changed them in the meantime before writing back, then revokes the token |
 | This PC | `tailscale get`, `tailscale set` |
 | Shared clipboard | `tailscale serve` forwards an address with a random code on port 7443 to the small local server, and only lets in devices on your own account |
 | Reading the Mac, syncing with the Mac | runs `pbpaste` and a small script on the Mac over `ssh`; on Windows it listens for the system's "clipboard changed" notice. Both sides tag what they write, so nothing bounces back and forth |
 | "Web" in the device menu | tries a few common web ports while the device is online, so the menu knows right away |
+| Installing Tailscale | downloads the MSI for your processor from `pkgs.tailscale.com`, has Windows verify its Authenticode signature and checks the signer is Tailscale Inc., then installs it with `msiexec` |
 | Local API for desktop widgets | listens only on `127.0.0.1:46214`, with a new random token each launch saved in `%LOCALAPPDATA%\TailOrbit\island.json`; lists devices, sends files, streams transfer progress |
 
 </details>

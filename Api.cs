@@ -32,7 +32,7 @@ namespace TailOrbit
         {
             revoked = false;
             var m = Token.Match(token ?? "");
-            if (!m.Success) return L.T("这不是访问令牌");
+            if (!m.Success) return L.T("这不是有效的访问令牌。");
             token = m.Value;
             try
             {
@@ -49,7 +49,7 @@ namespace TailOrbit
                 return null;
             }
             catch (WebException e) { return Explain(e); }
-            catch (FormatException) { return L.T("看不懂现在的访问规则，没有改动它"); }
+            catch (FormatException) { return L.T("无法解析当前的访问控制策略，未做任何更改。"); }
             finally
             {
                 // 不管成没成都作废：这把令牌不该比这一次用得更久
@@ -84,11 +84,11 @@ namespace TailOrbit
         static string Explain(WebException e)
         {
             var resp = e.Response as HttpWebResponse;
-            if (resp == null) return L.T("连不上 Tailscale 后台：{0}", e.Message);
+            if (resp == null) return L.T("无法连接 Tailscale 管理控制台：{0}", e.Message);
             int code = (int)resp.StatusCode;
-            if (code == 401) return L.T("这把令牌用不了（复制全了吗？是不是已经作废了）");
-            if (code == 403) return L.T("这个账号不能改访问规则，要所有者或管理员");
-            if (code == 412) return L.T("访问规则刚被改过，再试一次");
+            if (code == 401) return L.T("访问令牌无效。请确认已完整复制，且令牌未被撤销。");
+            if (code == 403) return L.T("当前账号无权修改访问控制，需要所有者或管理员权限。");
+            if (code == 412) return L.T("访问控制刚刚被修改，请重试。");
             string message = null;
             try
             {
@@ -97,7 +97,7 @@ namespace TailOrbit
             }
             catch (ArgumentException) { }   // 回的不是 JSON
             catch (IOException) { }
-            return string.IsNullOrEmpty(message) ? L.T("后台没接受（{0}）", code) : L.T("后台没接受（{0}）：{1}", code, message);
+            return string.IsNullOrEmpty(message) ? L.T("管理控制台拒绝了此请求（{0}）", code) : L.T("管理控制台拒绝了此请求（{0}）：{1}", code, message);
         }
 
         // ---------- 在 HuJSON 里插一条 ----------

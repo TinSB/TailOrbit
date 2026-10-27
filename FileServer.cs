@@ -18,7 +18,7 @@ namespace TailOrbit
     {
         public const int Port = 46213;
         static TcpListener listener;
-        static string error = "分享服务没开";
+        static string error = "分享服务未运行";
         [ThreadStatic] static string visitor;   // 这次请求的访客用什么语言（按浏览器的 Accept-Language），网页上的字按它翻译
 
         // null 表示在跑；否则是开不起来的原因
@@ -46,7 +46,7 @@ namespace TailOrbit
             }
             catch (SocketException)
             {
-                error = "本机 {0} 端口被别的程序占着，分享服务开不起来";
+                error = "本机端口 {0} 已被其他程序占用，分享服务无法启动。";
                 return;
             }
             new Thread(Accept) { IsBackground = true, Name = "TailOrbit 分享服务" }.Start();
@@ -268,7 +268,7 @@ namespace TailOrbit
 
         static void Reply(Stream s, int code, bool headOnly)
         {
-            var body = Encoding.UTF8.GetBytes(Page(code == 404 ? Say("找不到") : Say("打不开"), code == 404 ? Say("这个分享已经关了，或者文件不在了。") : Say("请求不对。"), ""));
+            var body = Encoding.UTF8.GetBytes(Page(code == 404 ? Say("未找到") : Say("无法打开"), code == 404 ? Say("此分享已关闭，或文件已不存在。") : Say("请求无效。"), ""));
             Head(s, code, "text/html; charset=utf-8", body.Length, "");
             if (!headOnly) s.Write(body, 0, body.Length);
         }
@@ -314,7 +314,7 @@ namespace TailOrbit
                 rows.Append(Row(Uri.EscapeDataString(d.Name) + "/", d.Name, d.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), Icon(Icons.Data("folder"))));
             foreach (var f in items.OfType<FileInfo>().OrderBy(x => x.Name, cmp))
                 rows.Append(Row(Uri.EscapeDataString(f.Name), f.Name, Ui.FormatSize(f.Length) + " · " + f.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), Icon(Icons.Data("file"))));
-            if (items.Count == 0) rows.Append("<p class=\"empty\">" + WebUtility.HtmlEncode(Say("这个文件夹是空的")) + "</p>");
+            if (items.Count == 0) rows.Append("<p class=\"empty\">" + WebUtility.HtmlEncode(Say("此文件夹为空")) + "</p>");
             var body = Encoding.UTF8.GetBytes(Page(title, null, rows.ToString()));
             Head(s, 200, "text/html; charset=utf-8", body.Length, "");
             if (!headOnly) s.Write(body, 0, body.Length);

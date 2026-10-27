@@ -145,7 +145,7 @@ namespace TailOrbit
         {
             Snapshot snap;
             try { snap = Tailscale.Load(); }
-            catch (Win32Exception) { snap = new Snapshot { Error = L.T("找不到 Tailscale") }; }
+            catch (Win32Exception) { snap = new Snapshot { Error = L.T("未安装 Tailscale") }; }
             string now = string.Join("\n", snap.Devices.Select(d => Settings.Key(d) + "|" + d.Name + "|" + d.Os + "|" + d.Online)) + "\n" + snap.Error;
             bool changed;
             lock (gate)
@@ -175,13 +175,13 @@ namespace TailOrbit
             var id = Tailscale.Get(o, "device") as string;
             var list = Tailscale.Get(o, "paths") as object[];
             var paths = list == null ? null : list.OfType<string>().ToList();
-            if (id == null || paths == null || paths.Count == 0 || paths.Count != list.Length) { Reply(s, 400, Error(L.T("请求不对。"))); return; }
+            if (id == null || paths == null || paths.Count == 0 || paths.Count != list.Length) { Reply(s, 400, Error(L.T("请求无效。"))); return; }
             var missing = paths.FirstOrDefault(p => !Exists(p));
-            if (missing != null) { Reply(s, 400, Error(L.T("找不到 {0}", NameOf(missing)))); return; }
+            if (missing != null) { Reply(s, 400, Error(L.T("未找到 {0}", NameOf(missing)))); return; }
             var snap = Load();
             var d = snap.Devices.FirstOrDefault(x => Settings.Key(x) == id);
-            if (d == null) { Reply(s, 404, Error(snap.Error ?? L.T("找不到这台设备"))); return; }
-            if (!d.Online) { Reply(s, 409, Error(L.T("{0} 不在线", d.Name))); return; }
+            if (d == null) { Reply(s, 404, Error(snap.Error ?? L.T("未找到该设备"))); return; }
+            if (!d.Online) { Reply(s, 409, Error(L.T("{0} 当前离线", d.Name))); return; }
             var j = new SendJob { Target = d, Paths = paths };
             lock (gate) jobs[j.Id] = j;
             Application.Current.Dispatcher.Invoke(() => host.SendFromIsland(j));
@@ -235,7 +235,7 @@ namespace TailOrbit
                 if (o != null) return o;
             }
             catch (ArgumentException) { }
-            Reply(s, 400, Error(L.T("请求不对。")));
+            Reply(s, 400, Error(L.T("请求无效。")));
             return null;
         }
 

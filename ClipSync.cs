@@ -136,10 +136,10 @@ for (;;) {
                 using (var p = Process.Start(new ProcessStartInfo("ssh", "-V") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true }))
                     p.WaitForExit(5000);
             }
-            catch (Win32Exception) { return L.T("这台电脑没装 ssh"); }
+            catch (Win32Exception) { return L.T("本机未安装 SSH"); }
             var snap = Tailscale.Load();
             if (snap.Error != null) return snap.Error;
-            return snap.Devices.Any(d => d.Os == "macOS" && Ssh.Target(d) != null) ? null : L.T("没有能连的 Mac：Mac 要开着远程登录，并且 ssh 配置里有它。");
+            return snap.Devices.Any(d => d.Os == "macOS" && Ssh.Target(d) != null) ? null : L.T("未找到可连接的 Mac。Mac 需要已开启“远程登录”，并已添加到 SSH 配置中。");
         }
 
         static void Begin()
@@ -371,7 +371,7 @@ for (;;) {
         // 太大的图片不传：弹个通知，免得以为同步坏了
         static void TooBig(long bytes)
         {
-            host.Notify(L.T("图片太大，没有同步"), L.T("这张有 {0:0.#} MB（上限 {1} MB），可以用「发文件」发过去。", bytes / 1048576.0, MaxPng >> 20));
+            host.Notify(L.T("图片过大，未同步"), L.T("此图片大小为 {0:0.#} MB（上限为 {1} MB），可使用“发送文件”发送。", bytes / 1048576.0, MaxPng >> 20));
         }
 
         // 一次送一份；送的时候本机又复制了，送完接着送最新的

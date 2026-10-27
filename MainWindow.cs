@@ -67,6 +67,9 @@ namespace TailOrbit
         IconView selfIcon, selfHover;
         Grid selfLabel;
         TextBlock selfName, selfIp;
+        FrameworkElement setupBox;  // 没装 Tailscale：本机下面的“安装 Tailscale”
+        FrameworkElement absent;    // 没装 Tailscale：其余各页整页盖上安装提示
+        bool missing;
         Device me;
         int selfCopy;
         // 收件：本机外圈走进度，圆盘里是百分比，收完打个勾
@@ -148,6 +151,8 @@ namespace TailOrbit
             pages["home"] = home;
             root.Background = th.Bg;
             root.Children.Add(home);
+            absent = new Grid { Background = th.Bg, Visibility = Visibility.Collapsed, Children = { TailscaleSetup.View(th, Installed) } };
+            root.Children.Add(absent);   // 各页第一次建时插在星网后面，都压在它下面
             root.Children.Add(TitleBar());
             root.Children.Add(Tabs());
             root.Children.Add(overlay);
@@ -226,6 +231,12 @@ namespace TailOrbit
             refresh.Start();
         }
 
+        // 程序起来、空闲时先读一遍设备，把星网上的设备建好：第一次打开主界面时开屏动画不会被中途建设备卡住
+        public void Preload()
+        {
+            Reload();
+        }
+
         // 换语言时顶替旧窗口：同样的位置、大小，直接停在指定那页，不放开屏动画
         public void Replace(MainWindow old, string page)
         {
@@ -268,28 +279,35 @@ namespace TailOrbit
 
         // ---------- 开屏 ----------
 
-        // 三圈由内向外荡开，本机弹出来，线一条条长出去、设备依次亮起，最后把快捷键按一遍
+        // 三圈由内向外荡开，本机弹出来，线一条条长出去、设备依次亮起，最后把快捷键按一遍。
+        // 整体晚 Lead 毫秒才动：窗口刚显示的头一帧要排版、画整个窗口（实测 30ms 上下），先停在起点等它画完，
+        // 不然一开头就跳过去一截（圈是快出慢停的，头 30ms 就走完了一成多）
+        const int Lead = 90;
+
         void Intro()
         {
             fresh = true;
             for (int i = 0; i < 3; i++)
             {
-                Ui.AnimFrom(rings[i], OpacityProperty, 0, 1, 900, i * 110, MainEase.Settle);
-                Ui.ScaleFrom(ringScale[i], 0.55, 1, 900, i * 110, MainEase.Settle);
+                // 两圈是虚线、点线，缩放时每帧都要重新描一遍：荡开的这一秒先当成贴图缩放，放完换回矢量（终态不变）
+                rings[i].CacheMode = new BitmapCache(1.0);
+                Ui.AnimFrom(rings[i], OpacityProperty, 0, 1, 900, Lead + i * 110, MainEase.Settle);
+                Ui.ScaleFrom(ringScale[i], 0.55, 1, 900, Lead + i * 110, MainEase.Settle);
             }
-            Ui.ScaleFrom(selfPop, 0, 1, 640, 0, Ui.Spring);
-            Ui.AnimFrom(selfLabel, OpacityProperty, 0, 1, 400, 300);
-            Appear(nodes.Values.ToList());
-            Ui.AnimFrom(recent, OpacityProperty, 0, 1, 500, 1100);
-            Ui.AnimFrom(recentShift, TranslateTransform.YProperty, 8, 0, 500, 1100);
-            Ui.After(1250, PressKeys);
+            Ui.After(Lead + 1150, () => { foreach (var r in rings) r.CacheMode = null; });
+            Ui.ScaleFrom(selfPop, 0, 1, 640, Lead, Ui.Spring);
+            Ui.AnimFrom(selfLabel, OpacityProperty, 0, 1, 400, Lead + 300);
+            Appear(nodes.Values.ToList(), Lead);
+            Ui.AnimFrom(recent, OpacityProperty, 0, 1, 500, Lead + 1100);
+            Ui.AnimFrom(recentShift, TranslateTransform.YProperty, 8, 0, 500, Lead + 1100);
+            Ui.After(Lead + 1250, PressKeys);
         }
 
-        void Appear(List<Node> list)
+        void Appear(List<Node> list, int lead = 0)
         {
             int on = 0, off = 0;
             foreach (var n in list.OrderBy(x => x.Dev.Online ? 0 : 1).ThenBy(x => x.Dev.Name, StringComparer.OrdinalIgnoreCase))
-                n.Appear(n.Dev.Online ? on++ : off++, o, true);
+                n.Appear(n.Dev.Online ? on++ : off++, o, true, lead);
         }
 
         // ---------- 本机 ----------
@@ -342,11 +360,18 @@ namespace TailOrbit
             Canvas.SetLeft(selfLabel, -140);
             Canvas.SetTop(selfLabel, 64);
             selfLabel.Children[0].MouseLeftButtonUp += delegate { CopySelf(); };
+            // 外面衬一圈和底色一样的底：圈线从旁边经过时在按钮前断开
+            var setup = new InstallButton(th, Installed);
+            setupBox = new Grid { Width = 280, Visibility = Visibility.Collapsed, Children = { new Border { Background = th.Bg, Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(18), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Child = setup } } };
+            Canvas.SetLeft(setupBox, -140);
+            Canvas.SetTop(setupBox, 92);
+            WindowChrome.SetIsHitTestVisibleInChrome(setupBox, true);
             self.Children.Add(halo);
             self.Children.Add(selfRipple);
             self.Children.Add(selfArc);
             self.Children.Add(disc);
             self.Children.Add(selfLabel);
+            self.Children.Add(setupBox);
             return self;
         }
 
@@ -443,8 +468,8 @@ namespace TailOrbit
             selfSpinning = on;
             selfArc.BeginAnimation(Arc.ValueProperty, null);
             selfArc.Value = on ? 0.22 : 0;
-            if (on) selfSpin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
-            else selfSpin.BeginAnimation(RotateTransform.AngleProperty, null);
+            if (on) Ui.Loop(selfArc, selfSpin, RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(900)) { RepeatBehavior = RepeatBehavior.Forever });
+            else Ui.Unloop(selfSpin, RotateTransform.AngleProperty);
         }
 
         // Tailscale 没在跑、没登录：本机变成空心圈，打个红色感叹号，名字的位置写原因
@@ -457,6 +482,33 @@ namespace TailOrbit
             selfIcon.Show(ok ? "monitor" : "alert");
             selfName.Text = ok ? (me != null ? me.Name : "") : error;
             selfIp.Text = me != null ? me.Ip : "";
+        }
+
+        // 没装 Tailscale：星网上本机下面出“安装 Tailscale”，其余各页整页盖上安装提示；装上了都收起
+        void ShowMissing()
+        {
+            if (missing && setupBox.Visibility != Visibility.Visible)
+            {
+                setupBox.Visibility = Visibility.Visible;
+                Ui.AnimFrom(setupBox, OpacityProperty, 0, 1, 300);
+            }
+            else if (!missing) setupBox.Visibility = Visibility.Collapsed;
+            absent.Visibility = missing && current != "home" ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // 刚装好 Tailscale：重新读设备，当前这一页也重新加载
+        void Installed()
+        {
+            missing = false;
+            ShowMissing();
+            Reload();
+            ReloadPage();
+        }
+
+        void ReloadPage()
+        {
+            var p = CurrentPage;
+            if (p != null) { p.Hidden(); p.Shown(); }
         }
 
         void CopySelf()
@@ -477,9 +529,13 @@ namespace TailOrbit
 
         void Apply(Snapshot snap)
         {
-            string error = snap == null ? L.T("找不到 Tailscale") : snap.Error;
+            bool was = missing;
+            missing = snap == null && TailscaleSetup.Missing;
+            string error = snap == null ? (missing ? L.T("未安装 Tailscale") : L.T("无法读取设备列表")) : snap.Error;
             me = snap == null ? null : snap.Self;
             ShowSelf(error);
+            ShowMissing();
+            if (was && !missing) ReloadPage();   // 在别处装上了 Tailscale：盖着的那一页重新加载
             var list = error == null ? snap.Devices : new List<Device>();
             var added = new List<Node>();
             var seen = new HashSet<string>();
@@ -632,13 +688,13 @@ namespace TailOrbit
             {
                 string ssh = Ssh.Target(d);
                 if (ssh != null) list.Add(new FanItem { Icon = "terminal", Label = L.T("终端"), Detail = "ssh " + ssh, Act = () => Ssh.Open(ssh) });
-                if (ClipShare.Readable(d)) list.Add(new FanItem { Icon = "clipboard", Label = L.T("读剪贴板"), Detail = ClipShare.Hotkey ?? "", Act = () => ClipShare.Pull(d) });
+                if (ClipShare.Readable(d)) list.Add(new FanItem { Icon = "clipboard", Label = L.T("读取剪贴板"), Detail = ClipShare.Hotkey ?? "", Act = () => ClipShare.Pull(d) });
                 if (webPort > 0)
                 {
                     string url = Web.Url(d, webPort, true);
                     list.Add(new FanItem { Icon = "globe", Label = L.T("网页"), Detail = Web.Url(d, webPort, false), Act = () => Ui.Launch(() => Process.Start(url)) });
                 }
-                list.Add(new FanItem { Icon = "send", Label = L.T("发文件"), Act = () => PickAndSend(n) });
+                list.Add(new FanItem { Icon = "send", Label = L.T("发送文件"), Act = () => PickAndSend(n) });
                 list[0].Primary = true;
             }
             string name = d.Dns != "" ? d.Dns : d.Ip;
@@ -657,20 +713,20 @@ namespace TailOrbit
             bool on = Settings.Watched(n.Dev);
             return new FanItem
             {
-                Icon = on ? "bell" : "bell-off", Label = said ?? (on ? L.T("掉线提醒开着") : L.T("掉线时提醒我")), Lit = on,
+                Icon = on ? "bell" : "bell-off", Label = said ?? (on ? L.T("离线提醒已开启") : L.T("离线时提醒我")), Lit = on,
                 Toggle = () =>
                 {
                     Settings.SetWatched(n.Dev, !on);
                     Alerts.Seed(n.Dev);
                     n.SetWatched(!on, true);
-                    return Bell(n, !on ? L.T("离线、恢复都会告诉你") : L.T("不再提醒"));
+                    return Bell(n, !on ? L.T("设备离线或恢复在线时都会通知你") : L.T("已关闭提醒"));
                 }
             };
         }
 
         void PickAndSend(Node n)
         {
-            var dlg = new OpenFileDialog { Multiselect = true, Title = L.T("发到 {0}", n.Dev.Name) };
+            var dlg = new OpenFileDialog { Multiselect = true, Title = L.T("发送到 {0}", n.Dev.Name) };
             if (dlg.ShowDialog(this) == true) Send(n, dlg.FileNames.ToList());
         }
 
@@ -686,6 +742,8 @@ namespace TailOrbit
             radius[0] = Math.Max(132, Math.Round(0.197 * u));
             radius[1] = Math.Max(radius[0] + 92, Math.Round(0.329 * u));
             radius[2] = Math.Max(radius[1] + 100, Math.Round(0.474 * u));
+            // 圈没变大小就不重设虚线：每次刷新都换一份虚线，两圈都得整圈重画
+            bool resized = rings[1].Width != 2 * radius[1] || rings[2].Width != 2 * radius[2];
             for (int i = 0; i < 3; i++)
             {
                 double r = radius[i];
@@ -693,8 +751,11 @@ namespace TailOrbit
                 Canvas.SetLeft(rings[i], o.X - r);
                 Canvas.SetTop(rings[i], o.Y - r);
             }
-            rings[1].StrokeDashArray = EvenDash(2 * Math.PI * radius[1], 2, 6);   // 中继：虚线
-            rings[2].StrokeDashArray = EvenDash(2 * Math.PI * radius[2], 1, 9);   // 离线：一串点
+            if (resized)
+            {
+                rings[1].StrokeDashArray = EvenDash(2 * Math.PI * radius[1], 2, 6);   // 中继：虚线
+                rings[2].StrokeDashArray = EvenDash(2 * Math.PI * radius[2], 1, 9);   // 离线：一串点
+            }
             selfAt.X = o.X;
             selfAt.Y = o.Y;
             flow.Width = flowIn.Width = w;
@@ -971,7 +1032,7 @@ namespace TailOrbit
             History.Record(j, result);
             bool away = !IsVisible || WindowState == WindowState.Minimized;
             if (away && result == null) host.Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths), true);
-            if (away && !string.IsNullOrEmpty(result)) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
+            if (away && !string.IsNullOrEmpty(result)) host.Notify(L.T("发送到 {0} 失败", j.Target.Name), L.T(result), true);
             Reload();
         }
 
@@ -1069,7 +1130,7 @@ namespace TailOrbit
 
         FrameworkElement Keys()
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 36, 30), Background = Brushes.Transparent, ToolTip = Ui.Tip(th, L.T("在资源管理器里选中文件，按下它就能发")) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 36, 30), Background = Brushes.Transparent, ToolTip = Ui.Tip(th, L.T("在文件资源管理器中选中文件，然后按下此快捷键即可发送。")) };
             foreach (var k in new[] { "Ctrl", "Alt", "A" })
             {
                 var b = new Border
@@ -1151,6 +1212,7 @@ namespace TailOrbit
             CloseFan();
             int dir = to > from ? 1 : -1;
             current = key;
+            ShowMissing();
             if (tabs.Index != to) tabs.Select(to, animate);
             if (!animate)
             {

@@ -16,6 +16,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using Microsoft.Win32;
@@ -213,11 +214,12 @@ namespace TailOrbit
         const double Pad = 24;
         readonly Theme th = new Theme();
         readonly bool install;
-        readonly Toggle option;
-        readonly Border action;
+        readonly Toggle option, tailscale;   // tailscale：没装 Tailscale 时问要不要一起装
+        readonly ProgressButton go;          // 安装用；卸载用红框的 action
+        readonly Border action, optionRow;
         readonly TextBlock label, note;
         readonly ScaleTransform pop = new ScaleTransform(0.96, 0.96);
-        bool busy;
+        bool busy, placed;   // placed：TailOrbit 已经装好，只剩装 Tailscale
 
         public bool Removed { get; private set; }   // 卸掉了：窗口关后再删程序文件
 
@@ -225,7 +227,7 @@ namespace TailOrbit
         {
             this.install = install;
             string installed = Setup.Installed;
-            Title = install ? "TailOrbit" : L.T("卸载 TailOrbit？");
+            Title = install ? "TailOrbit" : L.T("卸载 TailOrbit");
             Icon = Ui.WindowIcon();
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
@@ -234,35 +236,43 @@ namespace TailOrbit
             SizeToContent = SizeToContent.WidthAndHeight;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-            var close = Kit.IconButton(th, "close", L.T("取消"), () => { if (!busy) Close(); }, 32);
+            var close = Kit.IconButton(th, "close", L.T("关闭"), Cancel, 32);
             close.HorizontalAlignment = HorizontalAlignment.Right;
             close.Margin = new Thickness(0, -10, -10, 0);
 
             var head = new StackPanel { Background = Brushes.Transparent, Margin = new Thickness(0, 0, 0, 22) };
             head.Children.Add(new Image { Source = Ui.IconFrame(128), Width = 64, Height = 64 });
-            var title = new TextBlock { Text = install ? "TailOrbit" : L.T("卸载 TailOrbit？"), FontFamily = Ui.DisplayFont, FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 14, 0, 4) };
+            var title = new TextBlock { Text = install ? "TailOrbit" : L.T("卸载 TailOrbit"), FontFamily = Ui.DisplayFont, FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 14, 0, 4) };
             head.Children.Add(title);
             // 换新版时写“旧版 → 新版”
             string version = install && installed != null && installed != Setup.Version ? installed + "  →  " + Setup.Version : install ? Setup.Version : installed ?? "";
             if (version != "") head.Children.Add(new TextBlock { Text = version, FontSize = 13, Foreground = th.Mute, HorizontalAlignment = HorizontalAlignment.Center });
             head.MouseLeftButtonDown += delegate { DragMove(); };
 
-            // 安装时问开机自启，卸载时问要不要连设置和记录一起删；整行都能点
+            // 安装时问开机自启、没装 Tailscale 再问要不要一起装；卸载时问要不要连设置和记录一起删。整行都能点
             option = new Toggle(th, install && Setup.AutostartWanted);
-            var text = new TextBlock { Text = install ? L.T("开机自启") : L.T("同时删除设置和传输记录"), FontSize = 14, Foreground = th.Fg, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-            var row = new Border { MinHeight = 48, Padding = new Thickness(14, 8, 10, 8), CornerRadius = new CornerRadius(12), Background = th.Tile, Cursor = Cursors.Hand, Margin = new Thickness(0, 0, 0, 12) };
-            row.Child = Ui.Columns(0, text, option);
-            row.MouseLeftButtonUp += delegate { if (!busy) option.Set(!option.On, true); };
+            optionRow = Row(install ? L.T("开机时自动启动") : L.T("同时删除设置和传输记录"), null, option);
+            var rows = new StackPanel();
+            rows.Children.Add(optionRow);
+            if (install && TailscaleSetup.Missing)
+            {
+                tailscale = new Toggle(th, true);
+                rows.Children.Add(Row(L.T("同时安装 Tailscale"), L.T("TailOrbit 需要 Tailscale 才能运行，将从 Tailscale 官网下载并安装。"), tailscale));
+            }
 
             string verb = !install ? L.T("卸载") : installed == null ? L.T("安装") : installed == Setup.Version ? L.T("重新安装") : L.T("更新");
-            action = install ? Kit.Button(th, verb, true, Go) : Kit.Danger(th, verb, Go);
-            label = (TextBlock)action.Child;
-            note = new TextBlock { FontSize = 13, Foreground = th.Bad, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 10, 2, 0), Visibility = Visibility.Collapsed };
+            if (install) action = go = new ProgressButton(th, verb, Go);
+            else
+            {
+                action = Kit.Danger(th, verb, Go);
+                label = (TextBlock)action.Child;
+            }
+            note = new TextBlock { FontSize = 13, LineHeight = 19, Foreground = th.Bad, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 10, 2, 0), Visibility = Visibility.Collapsed };
 
             var stack = new StackPanel { Width = 300 };
             stack.Children.Add(close);
             stack.Children.Add(head);
-            stack.Children.Add(row);
+            stack.Children.Add(rows);
             stack.Children.Add(action);
             stack.Children.Add(note);
             var card = new Border
@@ -279,7 +289,22 @@ namespace TailOrbit
                 Ui.AnimTo(this, OpacityProperty, 1, 180);
                 Ui.ScaleTo(pop, 1, 320, Ui.Spring);
             };
-            KeyDown += (s, e) => { if (e.Key == Key.Escape && !busy) Close(); };
+            KeyDown += (s, e) => { if (e.Key == Key.Escape) Cancel(); };
+        }
+
+        Border Row(string title, string caption, Toggle t)
+        {
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+            text.Children.Add(new TextBlock { Text = title, FontSize = 14, Foreground = th.Fg, TextWrapping = TextWrapping.Wrap });
+            if (caption != null) text.Children.Add(new TextBlock { Text = caption, FontSize = 12, LineHeight = 17, Foreground = th.Mute, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) });
+            var row = new Border { MinHeight = 48, Padding = new Thickness(14, 8, 10, 8), CornerRadius = new CornerRadius(12), Background = th.Tile, Cursor = Cursors.Hand, Margin = new Thickness(0, 0, 0, 12), Child = Ui.Columns(0, text, t) };
+            row.MouseLeftButtonUp += delegate
+            {
+                if (busy || (placed && t != tailscale)) return;   // 装好以后开机自启已经定了，只剩 Tailscale 这一行能改
+                t.Set(!t.On, true);
+                if (placed) go.Text = t.On ? L.T("重试") : L.T("完成");
+            };
+            return row;
         }
 
         async void Go()
@@ -287,30 +312,69 @@ namespace TailOrbit
             if (busy) return;
             busy = true;
             note.Visibility = Visibility.Collapsed;
-            label.Text = install ? L.T("正在安装…") : L.T("正在卸载…");
-            action.Opacity = 0.6;
-            bool on = option.On;
-            string why = await Task.Run(() => install ? Setup.Install(on) : Setup.Uninstall(on));
-            if (why != null)
+            if (!install)
             {
-                busy = false;
-                action.Opacity = 1;
-                label.Text = L.T("再试一次");
-                note.Text = install ? L.T("没装上：{0}", why) : L.T("没卸干净：{0}", why);
-                note.Visibility = Visibility.Visible;
+                label.Text = L.T("正在卸载…");
+                action.Opacity = 0.6;
+                bool purge = option.On;
+                string err = await Task.Run(() => Setup.Uninstall(purge));
+                if (err != null) { Fail(L.T("卸载未完成：{0}", err)); return; }
+                Removed = true;
+                label.Text = L.T("已卸载");
+                Ui.After(1200, Close);
                 return;
             }
+            if (!placed)
+            {
+                go.Text = L.T("正在安装…");
+                go.Progress(-1);
+                bool on = option.On;
+                string err = await Task.Run(() => Setup.Install(on));
+                if (err != null) { Fail(L.T("安装失败：{0}", err)); return; }
+                placed = true;
+                Ui.AnimTo(optionRow, OpacityProperty, 0.45, 200);
+            }
+            if (tailscale != null && tailscale.On && TailscaleSetup.Missing)
+            {
+                go.Text = L.T("正在下载 Tailscale…");
+                go.Progress(0);
+                string err = await TailscaleSetup.Install(new Progress<double>(p => { if (p < 0) go.Text = L.T("正在安装 Tailscale…"); go.Progress(p); }), new WindowInteropHelper(this).Handle);
+                if (err != null) { Fail(err); return; }
+            }
+            Finish();
+        }
+
+        void Fail(string why)
+        {
+            busy = false;
             if (install)
             {
-                // 打开装好的那一份：它的主界面一出来就说明装好了
-                try { Process.Start(Setup.Exe); }
-                catch (Win32Exception) { }
-                Close();
-                return;
+                go.Progress(null);
+                go.Text = L.T("重试");
             }
-            Removed = true;
-            label.Text = L.T("已卸载");
-            Ui.After(1200, Close);
+            else
+            {
+                action.Opacity = 1;
+                label.Text = L.T("重试");
+            }
+            note.Text = why;
+            note.Visibility = Visibility.Visible;
+        }
+
+        // 打开装好的那一份：它的主界面一出来就说明装好了
+        void Finish()
+        {
+            try { Process.Start(Setup.Exe); }
+            catch (Win32Exception) { }
+            Close();
+        }
+
+        // 关窗：TailOrbit 已经装好（只是 Tailscale 没装上、或者不装了）就照常打开它
+        void Cancel()
+        {
+            if (busy) return;
+            if (placed) Finish();
+            else Close();
         }
     }
 }

@@ -167,7 +167,10 @@ namespace TailOrbit
 
     static partial class Tailscale
     {
-        public static readonly string Exe = File.Exists(@"C:\Program Files\Tailscale\tailscale.exe") ? @"C:\Program Files\Tailscale\tailscale.exe" : "tailscale.exe";
+        // 官方安装包装在 Program Files\Tailscale；那里没有就到 PATH 里找，还找不到就是没装（启动时抛 Win32Exception）。
+        // 每次现查：程序开着的时候也可能刚装上
+        public static readonly string Installed = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Tailscale", "tailscale.exe");
+        public static string Exe { get { return File.Exists(Installed) ? Installed : "tailscale.exe"; } }
 
         public static ProcessStartInfo Psi(string args)
         {
@@ -284,9 +287,9 @@ namespace TailOrbit
         static string Explain(string err)
         {
             string line = (err ?? "").Trim().Split('\n')[0].Trim();
-            if (line.Contains("NeedsLogin") || line.Contains("not logged in")) return L.T("Tailscale 没有登录");
-            if (line.Contains("failed to connect") || line.Contains("is Tailscale running")) return L.T("Tailscale 没有运行");
-            return line.Length > 0 ? line : L.T("读不到设备列表");
+            if (line.Contains("NeedsLogin") || line.Contains("not logged in")) return L.T("Tailscale 未登录");
+            if (line.Contains("failed to connect") || line.Contains("is Tailscale running")) return L.T("Tailscale 未运行");
+            return line.Length > 0 ? line : L.T("无法读取设备列表");
         }
     }
 
@@ -494,7 +497,7 @@ namespace TailOrbit
                 foreach (var p in Paths)
                 {
                     if (!Directory.Exists(p)) { files.Add(p); continue; }
-                    Report(Unknown, L.T("打包中"), "preparing");
+                    Report(Unknown, L.T("正在打包…"), "preparing");
                     Directory.CreateDirectory(temp);
                     files.Add(Zip(p, temp));
                 }
@@ -588,7 +591,7 @@ namespace TailOrbit
             foreach (var f in files) args.Append(" \"").Append(f).Append('"');
             args.Append(' ').Append(Target.Ip).Append(':');
             string lastError = null;
-            Report(watch == null ? Unknown : 0, watch == null ? L.T("发送中") : "0%", "sending");
+            Report(watch == null ? Unknown : 0, watch == null ? L.T("正在发送…") : "0%", "sending");
             cp = Process.Start(Tailscale.Psi(args.ToString()));
             cp.OutputDataReceived += (s, e) => { };
             cp.ErrorDataReceived += (s, e) =>
@@ -605,7 +608,7 @@ namespace TailOrbit
                     }
                     report();
                 }
-                else if (line.StartsWith("# warning:")) Report(Keep, L.T("对方没回应，还在重试"), "retrying");
+                else if (line.StartsWith("# warning:")) Report(Keep, L.T("对方无响应，正在重试…"), "retrying");
                 else if (line.Length > 0 && !line.StartsWith("sending \"")) lastError = line;
             };
             cp.BeginOutputReadLine();
@@ -823,14 +826,81 @@ namespace TailOrbit
 
         public static void AnimFrom(DependencyObject target, DependencyProperty prop, double from, double to, int ms, int delay = 0, IEasingFunction ease = null)
         {
+            Drop(target, prop);
             target.SetValue(prop, from);   // 延迟开始前先停在起点，免得闪一下
             var a = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(ms)) { BeginTime = TimeSpan.FromMilliseconds(delay), EasingFunction = ease ?? Ease };
             ((IAnimatable)target).BeginAnimation(prop, a);
         }
 
+        // 已经在终点就不再起一段动画，直接定在那儿：主界面每 10 秒刷新一次，多数时候什么都没变，
+        // 以前每次都给每台设备起一串 0.3～0.7 秒的动画，窗口一直在白渲染（10-27 实测）
         public static void AnimTo(DependencyObject target, DependencyProperty prop, double to, int ms, IEasingFunction ease = null)
         {
+            Drop(target, prop);
+            if ((double)target.GetValue(prop) == to) { Settle(target, prop, to); return; }
             ((IAnimatable)target).BeginAnimation(prop, new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = ease ?? Ease });
+        }
+
+        static void Settle(DependencyObject target, DependencyProperty prop, object value)
+        {
+            ((IAnimatable)target).BeginAnimation(prop, null);
+            target.SetValue(prop, value);
+        }
+
+        // 一直循环的动画（RepeatBehavior.Forever）一律走 Loop / Unloop：只在 owner 看得见时跑（换页、收起窗口、被换下来就停，
+        // 再看得见从头跑），停的时候把时钟真停掉。只 BeginAnimation(属性, null) 是把时钟从属性上摘下来，时钟本身还在
+        // WPF 的计时树上空转，直到下一次完整的垃圾回收，这期间整个窗口每秒白渲染几十帧（10-27 实测：去过分享页以后，
+        // 五页空闲时都还在每秒渲染 36～80 帧）。AnimTo、AnimFrom、Tint 换掉循环时也会先把它停掉
+        class Looping
+        {
+            public UIElement Owner;
+            public AnimationTimeline Anim;
+            public AnimationClock Clock;
+            public DependencyPropertyChangedEventHandler Seen;
+        }
+
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, Dictionary<DependencyProperty, Looping>> loops =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, Dictionary<DependencyProperty, Looping>>();
+
+        public static void Loop(UIElement owner, DependencyObject target, DependencyProperty prop, AnimationTimeline a)
+        {
+            Unloop(target, prop);
+            var l = new Looping { Owner = owner, Anim = a };
+            l.Seen = (s, e) => Run(target, prop, l, (bool)e.NewValue);
+            owner.IsVisibleChanged += l.Seen;
+            loops.GetOrCreateValue(target)[prop] = l;
+            Run(target, prop, l, owner.IsVisible);
+        }
+
+        public static void Unloop(DependencyObject target, DependencyProperty prop)
+        {
+            Drop(target, prop);
+            ((IAnimatable)target).BeginAnimation(prop, null);
+        }
+
+        // 不再循环：停掉时钟、不再跟着 owner 起停；属性上的动画由调用的地方接着换掉或撤掉（换掉时从当前值接着走）
+        static void Drop(DependencyObject target, DependencyProperty prop)
+        {
+            Dictionary<DependencyProperty, Looping> m;
+            Looping l;
+            if (!loops.TryGetValue(target, out m) || !m.TryGetValue(prop, out l)) return;
+            m.Remove(prop);
+            l.Owner.IsVisibleChanged -= l.Seen;
+            if (l.Clock != null) l.Clock.Controller.Stop();
+        }
+
+        static void Run(DependencyObject target, DependencyProperty prop, Looping l, bool on)
+        {
+            if (on == (l.Clock != null)) return;
+            if (on)
+            {
+                l.Clock = l.Anim.CreateClock();
+                ((IAnimatable)target).ApplyAnimationClock(prop, l.Clock);
+                return;
+            }
+            ((IAnimatable)target).BeginAnimation(prop, null);
+            l.Clock.Controller.Stop();
+            l.Clock = null;
         }
 
         public static void ScaleTo(ScaleTransform s, double to, int ms, IEasingFunction ease = null)
@@ -847,6 +917,8 @@ namespace TailOrbit
 
         public static void Tint(SolidColorBrush b, Color to, int ms)
         {
+            Drop(b, SolidColorBrush.ColorProperty);
+            if (b.Color == to) { Settle(b, SolidColorBrush.ColorProperty, to); return; }
             b.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(to, TimeSpan.FromMilliseconds(ms)));
         }
 
@@ -885,21 +957,21 @@ namespace TailOrbit
         }
 
         // 不知道进度时在进度条上来回流动的光
-        public static Brush Shimmer(Color c, out TranslateTransform shift)
+        public static Brush Shimmer(UIElement owner, Color c, out TranslateTransform shift)
         {
             shift = new TranslateTransform();
             var b = new LinearGradientBrush { StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5), RelativeTransform = shift };
             b.GradientStops.Add(new GradientStop(Theme.Fade(c, 0), 0));
             b.GradientStops.Add(new GradientStop(Theme.Fade(c, 0.22), 0.5));
             b.GradientStops.Add(new GradientStop(Theme.Fade(c, 0), 1));
-            shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-1, 1, TimeSpan.FromMilliseconds(1300)) { RepeatBehavior = RepeatBehavior.Forever });
+            Loop(owner, shift, TranslateTransform.XProperty, new DoubleAnimation(-1, 1, TimeSpan.FromMilliseconds(1300)) { RepeatBehavior = RepeatBehavior.Forever });
             return b;
         }
 
         public static void StopShimmer(ref TranslateTransform shift)
         {
             if (shift == null) return;
-            shift.BeginAnimation(TranslateTransform.XProperty, null);
+            Unloop(shift, TranslateTransform.XProperty);
             shift = null;
         }
 
@@ -989,7 +1061,9 @@ namespace TailOrbit
         MainWindow main;
         HwndSource sink;
         WinForms.NotifyIcon tray;
-        TrayMenu menu;
+        TrayMenu menu, spare;
+        string spareFor;
+        bool quitting;
         EventWaitHandle showSignal, quitSignal;
         bool sweeping;
         readonly List<SendJob> loose = new List<SendJob>();   // 环礁上发起、没在星网上画的发送：退出时取消
@@ -1013,7 +1087,7 @@ namespace TailOrbit
             tray.Visible = true;
 
             HotkeyOk = RegisterHotKey(sink.Handle, 1, 0x0002 | 0x0001 | 0x4000, 0x41);   // Ctrl+Alt+A，按住不连发
-            if (!HotkeyOk) Notify(L.T("Ctrl+Alt+A 被别的程序占用了"), L.T("从托盘图标打开主界面也能发文件。"));
+            if (!HotkeyOk) Notify(L.T("Ctrl+Alt+A 已被其他程序占用"), L.T("你也可以从托盘图标打开主界面来发送文件。"));
             // Win+Alt+V 读 Mac 的剪贴板（Win+V 是本机的剪贴板历史）；被占了就只能从设备菜单里读
             if (RegisterHotKey(sink.Handle, 2, 0x0008 | 0x0001 | 0x4000, 0x56)) ClipShare.Hotkey = "Win+Alt+V";
             AddClipboardFormatListener(sink.Handle);   // 本机剪贴板一变就收到通知：和 Mac 共用剪贴板
@@ -1037,8 +1111,16 @@ namespace TailOrbit
             Inbox.Start();
             Alerts.Start(this);
             if (showMain) ShowMain();
-            // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好，第一次按 Ctrl+Alt+A 少等一截
-            Ui.After(2500, () => Warm.Start(() => new WindowInteropHelper(panel).EnsureHandle()));
+            // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好、备好托盘菜单、把主界面建好并读一遍设备，
+            // 第一次按 Ctrl+Alt+A、第一次右键托盘、第一次点开主界面都少等一截
+            Ui.After(2500, () => Warm.Start(() =>
+            {
+                new WindowInteropHelper(panel).EnsureHandle();
+                SpareMenu();
+                if (main != null) return;
+                main = new MainWindow(this);
+                main.Preload();
+            }));
         }
 
         void Sweep()
@@ -1048,7 +1130,7 @@ namespace TailOrbit
             Task.Run(() => Shares.Sweep()).ContinueWith(t =>
             {
                 sweeping = false;
-                if (!t.IsFaulted && t.Result.Count > 0) Notify(L.T("公开分享到时间关了"), string.Join(L.T("、"), t.Result));
+                if (!t.IsFaulted && t.Result.Count > 0) Notify(L.T("公开分享已到期关闭"), string.Join(L.T("、"), t.Result));
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -1056,10 +1138,34 @@ namespace TailOrbit
         void ShowMenu()
         {
             if (menu != null) menu.Dismiss();
-            var m = new TrayMenu(this);
+            var m = spare;
+            spare = null;
+            if (m == null || spareFor != MenuState())
+            {
+                if (m != null) m.Close();
+                m = new TrayMenu(this);
+            }
             menu = m;
-            m.Closed += delegate { if (menu == m) menu = null; };
+            m.Closed += delegate { if (menu == m) menu = null; SpareMenu(); };
             m.Open();
+        }
+
+        // 右键时现建菜单窗口、头一回显示要一百多毫秒：空闲时先备好下一份
+        void SpareMenu()
+        {
+            Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                if (spare != null || quitting) return;
+                spare = new TrayMenu(this);
+                spareFor = MenuState();
+                spare.Prepare();
+            }));
+        }
+
+        // 菜单建的时候读的那些：变了备好的那份就作废
+        string MenuState()
+        {
+            return L.Code + "|" + HotkeyOk + "|" + Settings.ClipOn + "|" + Settings.SyncMac;
         }
 
         // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
@@ -1084,7 +1190,7 @@ namespace TailOrbit
         // 换界面语言：主界面原地换成新语言的一份（停在本机页、位置大小不变），快捷面板也换；托盘菜单每次现做，不用管
         public void SetLanguage(string setting)
         {
-            if ((main != null && main.Busy) || panel.Busy) { Notify(L.T("先不换语言"), L.T("有文件正在发送，发完再换。")); return; }
+            if ((main != null && main.Busy) || panel.Busy) { Notify(L.T("暂不切换语言"), L.T("有文件正在发送，请在发送完成后再切换。")); return; }
             Settings.Language = setting;
             L.Use(setting);
             panel.Close();   // 上面已经挡掉了正在发送的情况：快捷面板总能换成新语言的一份
@@ -1129,7 +1235,7 @@ namespace TailOrbit
                 string result = t.IsFaulted ? t.Exception.GetBaseException().Message : t.Result;
                 History.Record(j, result);
                 if (result == null) Notify(L.T("已发送到 {0}", j.Target.Name), Ui.Describe(j.Paths), true);
-                else if (result != "") Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
+                else if (result != "") Notify(L.T("发送到 {0} 失败", j.Target.Name), L.T(result), true);
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -1168,6 +1274,7 @@ namespace TailOrbit
 
         public void Quit()
         {
+            quitting = true;
             panel.Abort();
             if (main != null) main.Abort();
             foreach (var j in loose) j.Cancel();

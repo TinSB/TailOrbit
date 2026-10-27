@@ -137,9 +137,9 @@ namespace TailOrbit
             // 右边：体检、要处理的事，底下是流量
             when = Kit.Text("", 13, Th.Mute);
             when.Margin = new Thickness(10, 2, 0, 0);
-            var refresh = Kit.IconButton(Th, "refresh", L.T("重新体检"), Check, 40);
+            var refresh = Kit.IconButton(Th, "refresh", L.T("重新检测"), Check, 40);
             refresh.Background = Th.Hair;
-            var head = Ui.Columns(1, Kit.Title(Th, L.T("体检")), when, refresh);
+            var head = Ui.Columns(1, Kit.Title(Th, L.T("网络检测")), when, refresh);
             head.Margin = new Thickness(0, 0, 0, 8);
             down = new TextBlock { FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg };
             up = new TextBlock { FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = upInk, Margin = new Thickness(18, 0, 0, 0) };
@@ -150,7 +150,7 @@ namespace TailOrbit
             foot.Children.Add(totals);
             foot.Children.Add(bar);
             foot.Children.Add(legend);
-            var footBox = new Border { BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = foot, ToolTip = Ui.Tip(Th, L.T("Tailscale 这次启动以来收发的流量")) };
+            var footBox = new Border { BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = foot, ToolTip = Ui.Tip(Th, L.T("自 Tailscale 本次启动以来的收发流量")) };
             var dock = new DockPanel();
             DockPanel.SetDock(footBox, Dock.Bottom);
             dock.Children.Add(footBox);
@@ -268,7 +268,7 @@ namespace TailOrbit
                     Dot d;
                     if (!dots.TryGetValue(ip, out d)) { d = Make(ip); dots[ip] = d; added.Add(d); }
                     string name = Tailscale.ShortName(p);
-                    d.Name = name == "device-of-shared-to-user" ? L.T("共享来的设备") : name;
+                    d.Name = name == "device-of-shared-to-user" ? L.T("共享设备") : name;
                     d.Os = (Tailscale.Get(p, "OS") as string) ?? "";
                     d.Online = true.Equals(Tailscale.Get(p, "Online"));
                     d.Active = true.Equals(Tailscale.Get(p, "Active"));
@@ -370,42 +370,42 @@ namespace TailOrbit
             if (on)
             {
                 Ui.AnimTo(sweep, OpacityProperty, 1, 300);
-                sweepTurn.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(1400)) { RepeatBehavior = RepeatBehavior.Forever });
+                Ui.Loop(sweep, sweepTurn, RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(1400)) { RepeatBehavior = RepeatBehavior.Forever });
                 return;
             }
             var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(400));
-            fade.Completed += delegate { if (!checking) sweepTurn.BeginAnimation(RotateTransform.AngleProperty, null); };
+            fade.Completed += delegate { if (!checking) Ui.Unloop(sweepTurn, RotateTransform.AngleProperty); };
             sweep.BeginAnimation(OpacityProperty, fade);
         }
 
         void RenderChecks()
         {
-            when.Text = checking ? L.T("体检中…") : netAt == DateTime.MinValue ? "" : Ago(DateTime.Now - netAt);
+            when.Text = checking ? L.T("正在检测…") : netAt == DateTime.MinValue ? "" : Ago(DateTime.Now - netAt);
             var rows = new List<string[]>();   // 每行：状态、名目、结果
             Action<string, string, string> add = (a, b, c) => rows.Add(new[] { a, b, c });
             if (net == null)
             {
-                foreach (var k in new[] { L.T("UDP 打洞"), "IPv6", L.T("NAT 类型"), L.T("端口映射"), L.T("最近中继") }) add("wait", k, "…");
+                foreach (var k in new[] { L.T("UDP 穿透"), "IPv6", L.T("NAT 类型"), L.T("端口映射"), L.T("最近的中继") }) add("wait", k, "…");
             }
             else
             {
                 bool udp = true.Equals(Tailscale.Get(net, "UDP"));
-                add(udp ? "ok" : "bad", L.T("UDP 打洞"), udp ? L.T("正常") : L.T("不通，只能走中继"));
+                add(udp ? "ok" : "bad", L.T("UDP 穿透"), udp ? L.T("正常") : L.T("不可用，仅能通过中继连接"));
                 bool v6 = true.Equals(Tailscale.Get(net, "IPv6"));
-                add(v6 ? "ok" : "none", "IPv6", v6 ? L.T("可用") : L.T("没有"));
+                add(v6 ? "ok" : "none", "IPv6", v6 ? L.T("可用") : L.T("无"));
                 object varies = Tailscale.Get(net, "MappingVariesByDestIP");
-                add(varies == null ? "none" : true.Equals(varies) ? "bad" : "ok", L.T("NAT 类型"), varies == null ? L.T("不知道") : true.Equals(varies) ? L.T("难穿透") : L.T("好穿透"));
+                add(varies == null ? "none" : true.Equals(varies) ? "bad" : "ok", L.T("NAT 类型"), varies == null ? L.T("未知") : true.Equals(varies) ? L.T("严格") : L.T("开放"));
                 string map = true.Equals(Tailscale.Get(net, "PMP")) ? "NAT-PMP" : true.Equals(Tailscale.Get(net, "UPnP")) ? "UPnP" : true.Equals(Tailscale.Get(net, "PCP")) ? "PCP" : "";
-                add(map != "" ? "ok" : "none", L.T("端口映射"), map != "" ? map : L.T("没有"));
+                add(map != "" ? "ok" : "none", L.T("端口映射"), map != "" ? map : L.T("无"));
                 var lat = Tailscale.Get(net, "RegionLatency") as Dictionary<string, object>;
                 object ns = Tailscale.Get(lat, Convert.ToString(Tailscale.Get(net, "PreferredDERP"), CultureInfo.InvariantCulture));
                 string relay = City(selfRelay) + (ns != null ? " · " + Math.Round(Convert.ToDouble(ns, CultureInfo.InvariantCulture) / 1e6) + " ms" : "");
-                add("none", L.T("最近中继"), relay);
+                add("none", L.T("最近的中继"), relay);
             }
             if (ver != "")
             {
                 bool newer = !string.IsNullOrEmpty(upstream) && upstream != ver;
-                add(newer ? "none" : upstream == ver ? "ok" : "none", L.T("版本"), ver + (newer ? " · " + L.T("可更新到 {0}", upstream) : upstream == ver ? " · " + L.T("最新") : ""));
+                add(newer ? "none" : upstream == ver ? "ok" : "none", L.T("版本"), ver + (newer ? " · " + L.T("有可用更新：{0}", upstream) : upstream == ver ? " · " + L.T("已是最新版本") : ""));
             }
             // 密钥最早什么时候到期（本机关了到期的不算）
             var keys = dots.Values.Where(d => d.KeyExpiry != null).Select(d => new { d.Name, At = d.KeyExpiry.Value }).ToList();
@@ -414,7 +414,7 @@ namespace TailOrbit
             {
                 var k = keys.OrderBy(x => x.At).First();
                 int days = (int)Math.Floor((k.At - DateTime.UtcNow).TotalDays);
-                add(days < 14 ? "bad" : "none", L.T("密钥最早到期"), k.Name + " · " + (days < 0 ? L.T("已经过期") : days == 0 ? L.T("今天") : L.T("{0} 天后", days)));
+                add(days < 14 ? "bad" : "none", L.T("最早的密钥到期时间"), k.Name + " · " + (days < 0 ? L.T("已过期") : days == 0 ? L.T("今天") : L.T("{0} 天后", days)));
             }
             string sig = string.Join("\n", rows.Select(r => string.Join("\t", r)));
             if (sig != checksShown)
@@ -435,15 +435,15 @@ namespace TailOrbit
             foreach (var h in health) { var t = h; texts.Add(t); all.Add(() => Issue(t, null, null)); }
             foreach (var e in shares.Where(x => x.Dead != ""))
             {
-                string t = L.T("分享 {0} 打不开", e.Label);
+                string t = L.T("分享 {0} 无法打开", e.Label);
                 texts.Add(t);
-                all.Add(() => Issue(t, L.T("去看"), () => Host.ShowPage("share")));
+                all.Add(() => Issue(t, L.T("查看"), () => Host.ShowPage("share")));
             }
             foreach (var d in dots.Values.Where(x => !x.Online && x.LastSeen != null && (DateTime.UtcNow - x.LastSeen.Value).TotalDays >= 7).OrderBy(x => x.LastSeen))
             {
-                string t = L.T("{0} 离线 {1} 天", d.Name, Math.Floor((DateTime.UtcNow - d.LastSeen.Value).TotalDays));
+                string t = L.T("{0} 已离线 {1} 天", d.Name, Math.Floor((DateTime.UtcNow - d.LastSeen.Value).TotalDays));
                 texts.Add(t);
-                all.Add(() => Issue(t, L.T("去后台"), () => Open("https://login.tailscale.com/admin/machines")));
+                all.Add(() => Issue(t, L.T("前往管理控制台"), () => Open("https://login.tailscale.com/admin/machines")));
             }
             int fit = 3;
             if (panel.ActualHeight > 0)
@@ -458,7 +458,7 @@ namespace TailOrbit
             issues.Children.Clear();
             int show = all.Count <= fit ? all.Count : fit - 1;
             for (int i = 0; i < show; i++) issues.Children.Add(all[i]());
-            if (show < all.Count) issues.Children.Add(Issue(L.T("还有 {0} 件要处理", all.Count - show), null, null));
+            if (show < all.Count) issues.Children.Add(Issue(L.T("还有 {0} 项待处理", all.Count - show), null, null));
         }
 
         void RenderTraffic()
@@ -627,7 +627,7 @@ namespace TailOrbit
             else if (!on && d.LastSeen != null)
             {
                 var gone = DateTime.UtcNow - d.LastSeen.Value;
-                d.Note.Text = L.T("离线 {0}", Span(gone));
+                d.Note.Text = L.T("已离线 {0}", Span(gone));
                 d.Note.FontFamily = Ui.TextFont;
                 d.Note.Foreground = gone.TotalDays >= 7 ? Th.Bad : Th.Dim;
             }
@@ -671,14 +671,14 @@ namespace TailOrbit
             d.FlowDir = dir;
             if (dir == 0)
             {
-                d.Flow.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
+                Ui.Unloop(d.Flow, Shape.StrokeDashOffsetProperty);
                 Ui.AnimTo(d.Flow, OpacityProperty, 0, 200);
                 return;
             }
             // 连线从本机画向设备：虚线往回挪就是光点往本机流（在下载）
             double period = 13 / 3.4;
             int ms = rate > 10 * 1024 * 1024 ? 260 : rate > 1024 * 1024 ? 380 : 520;
-            d.Flow.BeginAnimation(Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, dir == 1 ? period : -period, TimeSpan.FromMilliseconds(ms)) { RepeatBehavior = RepeatBehavior.Forever });
+            Ui.Loop(d.Flow, d.Flow, Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, dir == 1 ? period : -period, TimeSpan.FromMilliseconds(ms)) { RepeatBehavior = RepeatBehavior.Forever });
             Ui.AnimTo(d.Flow, OpacityProperty, 0.95, 250);
         }
 
@@ -686,10 +686,10 @@ namespace TailOrbit
         {
             var text = new List<string> { d.Name + "  " + d.Ip };
             string via = d.Active ? d.Relay : d.Via;
-            if (!d.Online) text.Add(d.LastSeen != null ? L.T("最后在线：{0}", Ui.When(d.LastSeen.Value.ToLocalTime())) : L.T("离线"));
+            if (!d.Online) text.Add(d.LastSeen != null ? L.T("上次在线：{0}", Ui.When(d.LastSeen.Value.ToLocalTime())) : L.T("离线"));
             else if (d.Ring == "direct") text.Add(L.T("直连") + (d.Addr != "" ? "  " + d.Addr : ""));
-            else text.Add(via == "peer" ? L.T("经别的设备中继") : L.T("经{0}中继", City(via)));
-            if (d.Rx + d.Tx > 0) text.Add(L.T("这次连上后：收 {0} · 发 {1}", Ui.FormatSize(d.Rx), Ui.FormatSize(d.Tx)));
+            else text.Add(via == "peer" ? L.T("经其他设备中继") : L.T("经{0}中继", City(via)));
+            if (d.Rx + d.Tx > 0) text.Add(L.T("本次连接：接收 {0} · 发送 {1}", Ui.FormatSize(d.Rx), Ui.FormatSize(d.Tx)));
             return string.Join("\n", text);
         }
 

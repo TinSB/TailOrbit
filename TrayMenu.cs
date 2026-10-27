@@ -43,7 +43,7 @@ namespace TailOrbit
         readonly Image appIcon = new Image { Width = 18, Height = 18 };
         Popup sub;
         Rect area;     // 鼠标所在屏幕的工作区（不含任务栏），和窗口位置一样按与 DPI 无关的单位
-        bool closing, subOnRight;
+        bool closing, subOnRight, opened;
         int hover;     // 子菜单的延时开、关：只认最后一次
         List<KeyValuePair<Device, string>> terms;   // 能开终端的在线设备和它的 ssh 目标；null 表示还在读
         IntPtr mouseHook, keyHook;
@@ -67,10 +67,10 @@ namespace TailOrbit
             var open = Item(appIcon, null, L.T("打开主界面"), null, true);
             Act(open, host.OpenFromTray);
             var send = Glyph("send");
-            var sendRow = Item(send, send, L.T("发文件"), host.HotkeyOk ? Keys() : null, false);
+            var sendRow = Item(send, send, L.T("发送文件"), host.HotkeyOk ? Keys() : null, false);
             Act(sendRow, host.SendFromTray);
             var inbox = Glyph("inbox");
-            var got = Item(inbox, inbox, L.T("收到的文件"), null, false);
+            var got = Item(inbox, inbox, L.T("已接收的文件"), null, false);
             Act(got, OpenReceived);
             var term = Glyph("terminal");
             termRow = Item(term, term, L.T("终端"), new IconView("chevron-down", 12, th.Mute) { LayoutTransform = new RotateTransform(-90) }, false);
@@ -102,24 +102,44 @@ namespace TailOrbit
             subCard.MouseEnter += delegate { hover++; };   // 移进了子菜单：别再按“指到了别的行”把它关掉
         }
 
-        // 在鼠标那里弹出：卡片的一角对着鼠标，右边、下边放不下就往左、往上开（托盘在屏幕底部时总是往上）
-        public void Open()
+        // 建好窗口（不抢焦点、不进 Alt+Tab），按内容定好大小
+        void Build()
         {
             IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
             SetWindowLong(hwnd, -20, GetWindowLong(hwnd, -20) | 0x08000000 | 0x80);   // GWL_EXSTYLE：WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+            appIcon.Source = Ui.IconFrame(18 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+            card.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Width = card.DesiredSize.Width;
+            Height = card.DesiredSize.Height;
+        }
+
+        // 备用的一份：先在屏幕外透明地显示一次再收起。新建的透明窗口头两三帧每帧要 20～30ms，
+        // 留到右键时，弹出动画的前一半就被吞掉了（10-27 实测）；备好的这份右键后 30～40ms 就开始动
+        public void Prepare()
+        {
+            Build();
+            card.Opacity = 0;
+            Left = Top = -32000;
+            EventHandler drawn = null;
+            drawn = delegate { ContentRendered -= drawn; if (!opened) Hide(); };
+            ContentRendered += drawn;
+            Show();
+        }
+
+        // 在鼠标那里弹出：卡片的一角对着鼠标，右边、下边放不下就往左、往上开（托盘在屏幕底部时总是往上）
+        public void Open()
+        {
+            opened = true;
+            Build();
             var dpi = VisualTreeHelper.GetDpi(this);
-            appIcon.Source = Ui.IconFrame(18 * dpi.DpiScaleX);
             var cur = WinForms.Cursor.Position;
             var wa = WinForms.Screen.FromPoint(cur).WorkingArea;
             area = new Rect(wa.Left / dpi.DpiScaleX, wa.Top / dpi.DpiScaleY, wa.Width / dpi.DpiScaleX, wa.Height / dpi.DpiScaleY);
-            card.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double w = card.DesiredSize.Width - 2 * Pad, h = card.DesiredSize.Height - 2 * Pad;
+            double w = Width - 2 * Pad, h = Height - 2 * Pad;
             double cx = cur.X / dpi.DpiScaleX, cy = cur.Y / dpi.DpiScaleY;
             bool left = cx + w > area.Right, up = cy + h > area.Bottom;
             double x = Math.Max(area.Left, Math.Min(area.Right - w, left ? cx - w : cx));
             double y = Math.Max(area.Top, Math.Min(area.Bottom - h, up ? cy - h : cy));
-            Width = w + 2 * Pad;
-            Height = h + 2 * Pad;
             Left = x - Pad;
             Top = y - Pad;
             card.RenderTransformOrigin = new Point(left ? 1 : 0, up ? 1 : 0);
@@ -247,7 +267,7 @@ namespace TailOrbit
                 if (why == null) { host.RaiseToggled(); return; }
                 t.Set(!want, true);
                 Ui.Shake((TranslateTransform)row.RenderTransform);
-                host.Notify(L.T("没改成"), why);
+                host.Notify(L.T("更改失败"), why);
             };
             return row;
         }
@@ -267,7 +287,7 @@ namespace TailOrbit
             show();
             ClipSync.Changed += show;
             Closed += delegate { ClipSync.Changed -= show; };
-            return Switch(new Grid { Children = { g, dot } }, g, L.T("和 Mac 共用剪贴板"), Settings.SyncMac, ClipSync.Turn);
+            return Switch(new Grid { Children = { g, dot } }, g, L.T("与 Mac 共享剪贴板"), Settings.SyncMac, ClipSync.Turn);
         }
 
         // 收到的文件：在资源管理器里选中最近收到的那个；它被挪走、改了名就打开“下载”
@@ -315,7 +335,7 @@ namespace TailOrbit
         {
             subList.Children.Clear();
             if (terms == null || terms.Count == 0)
-                subList.Children.Add(new TextBlock { Text = terms == null ? L.T("读取设备中…") : L.T("没有能开终端的设备"), FontSize = 13.5, Foreground = th.Mute, Margin = new Thickness(10, 9, 10, 9) });
+                subList.Children.Add(new TextBlock { Text = terms == null ? L.T("正在读取设备…") : L.T("没有可打开终端的设备"), FontSize = 13.5, Foreground = th.Mute, Margin = new Thickness(10, 9, 10, 9) });
             else
                 foreach (var x in terms)
                 {

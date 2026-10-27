@@ -166,15 +166,23 @@ namespace TailOrbit
             Task.Run(() => Tailscale.Load()).ContinueWith(t =>
             {
                 if (n != loads || job != null) return;
-                if (t.IsFaulted) { devices = new List<Device>(); Message(L.T("找不到 Tailscale"), true); return; }
+                if (t.IsFaulted) { devices = new List<Device>(); Missing(); return; }
                 var snap = t.Result;
                 if (snap.Error != null) { devices = snap.Devices; Message(snap.Error, true); return; }
-                if (snap.Devices.Count == 0) { devices = snap.Devices; Message(L.T("没有能接收文件的设备"), false); return; }
+                if (snap.Devices.Count == 0) { devices = snap.Devices; Message(L.T("没有可接收文件的设备"), false); return; }
                 bool same = snap.Devices.Select(d => d.Key).SequenceEqual(devices.Select(d => d.Key)) && rows.Count == snap.Devices.Count;
                 bool wasEmpty = rows.Count == 0;
                 devices = snap.Devices;
                 if (!same) BuildRows(wasEmpty);
             }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        // 读不到设备：没装 Tailscale 就在提示下面放“安装 Tailscale”，装好接着读
+        void Missing()
+        {
+            bool missing = TailscaleSetup.Missing;
+            Message(missing ? L.T("未安装 Tailscale") : L.T("无法读取设备列表"), true);
+            if (missing) list.Children.Add(new InstallButton(th, Reload) { Margin = new Thickness(14, 0, 14, 14) });
         }
 
         void Message(string text, bool error)
@@ -190,7 +198,7 @@ namespace TailOrbit
 
         void BuildRows(bool animate)
         {
-            if (devices.Count == 0) { Message(L.T("读取设备中…"), false); return; }
+            if (devices.Count == 0) { Message(L.T("正在读取设备…"), false); return; }
             list.Children.Clear();
             rows.Clear();
             for (int i = 0; i < devices.Count; i++)
@@ -240,7 +248,7 @@ namespace TailOrbit
             r.ActionBtn.MouseLeftButtonUp += (s, e) =>
             {
                 e.Handled = true;
-                if (job != null && index == jobIndex) { job.Cancel(); r.Status.Text = L.T("正在取消"); }
+                if (job != null && index == jobIndex) { job.Cancel(); r.Status.Text = L.T("正在取消…"); }
                 else CopyIp(index);
             };
             return r;
@@ -287,7 +295,7 @@ namespace TailOrbit
             job = j;
             jobIndex = i;
             j.Progress = (f, text) => Dispatcher.BeginInvoke(new Action(() => { if (job == j) SetProgress(r, f, text); }));
-            SetProgress(r, SendJob.Unknown, L.T("准备中"));
+            SetProgress(r, SendJob.Unknown, L.T("正在准备…"));
             r.Action.Show("x");
             r.ActionBtn.ToolTip = Ui.Tip(th, L.T("取消发送"));
             for (int k = 0; k < rows.Count; k++) if (k != i) Ui.AnimTo(rows[k].Root, OpacityProperty, 0.35, 180);
@@ -312,14 +320,14 @@ namespace TailOrbit
             else
             {
                 Fail(r, L.T(result));
-                if (!IsVisible) host.Notify(L.T("没发出去：{0}", j.Target.Name), L.T(result), true);
+                if (!IsVisible) host.Notify(L.T("发送到 {0} 失败", j.Target.Name), L.T(result), true);
             }
         }
 
         void CopyIp(int i)
         {
             var r = rows[i];
-            if (!Ui.CopyText(r.Device.Ip)) { r.Status.Text = L.T("剪贴板被占用，再试一次"); return; }
+            if (!Ui.CopyText(r.Device.Ip)) { r.Status.Text = L.T("剪贴板正被其他程序占用，请重试。"); return; }
             r.Status.Text = L.T("{0} 已复制", r.Device.Ip);
             r.Status.Foreground = th.Ok;
             r.Action.Show("check");
@@ -356,7 +364,7 @@ namespace TailOrbit
             r.Status.ToolTip = null;
             r.Action.Show("copy");
             r.Action.Stroke = th.Mute;
-            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP"));
+            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP 地址"));
         }
 
         void SetProgress(Row r, double f, string text)
@@ -368,7 +376,7 @@ namespace TailOrbit
             Ui.AnimTo(r.Fill, OpacityProperty, 1, 150);
             if (f < 0)
             {
-                if (r.Shimmer == null) r.Fill.Background = Ui.Shimmer(th.FgColor, out r.Shimmer);
+                if (r.Shimmer == null) r.Fill.Background = Ui.Shimmer(r.Fill, th.FgColor, out r.Shimmer);
                 Ui.AnimTo(r.FillScale, ScaleTransform.ScaleXProperty, 1, 200);
             }
             else
@@ -404,7 +412,7 @@ namespace TailOrbit
             r.Status.Foreground = th.Bad;
             r.Action.Show("copy");
             r.Action.Stroke = th.Mute;
-            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP"));
+            r.ActionBtn.ToolTip = Ui.Tip(th, L.T("复制 IP 地址"));
             Ui.Shake(r.Shift);
         }
     }

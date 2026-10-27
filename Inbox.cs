@@ -288,18 +288,18 @@ namespace TailOrbit
                 if (!s.Online && (!known || was)) since[s.Key] = s.LastSeen.Year > 2000 ? s.LastSeen : DateTime.Now;
                 online[s.Key] = s.Online;
                 if (!known || was == s.Online || woke) continue;
-                if (!s.Online) notify(L.T("{0} 离线了", s.Name), L.T("恢复的时候再告诉你"));
+                if (!s.Online) notify(L.T("{0} 已离线", s.Name), L.T("恢复在线时将通知你"));
                 else
                 {
                     DateTime t;
-                    notify(L.T("{0} 恢复在线", s.Name), since.TryGetValue(s.Key, out t) ? L.T("离线了 {0}", Span(DateTime.Now - t)) : "");
+                    notify(L.T("{0} 已恢复在线", s.Name), since.TryGetValue(s.Key, out t) ? L.T("离线时长：{0}", Span(DateTime.Now - t)) : "");
                 }
             }
         }
 
         static string Span(TimeSpan t)
         {
-            if (t.TotalMinutes < 1) return L.T("不到 1 分钟");
+            if (t.TotalMinutes < 1) return L.T("不足 1 分钟");
             if (t.TotalHours < 1) return L.T("{0} 分钟", (int)t.TotalMinutes);
             if (t.TotalDays < 2) return t.Minutes > 0 ? L.T("{0} 小时 {1} 分钟", (int)t.TotalHours, t.Minutes) : L.T("{0} 小时", (int)t.TotalHours);
             return L.T("{0} 天", (int)t.TotalDays);
