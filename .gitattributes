@@ -1,0 +1,2 @@
+# The iPhone app is built on a Mac: keep its text files LF, even in a Windows checkout
+ios/** text=auto eol=lf
