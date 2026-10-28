@@ -250,7 +250,7 @@ namespace TailOrbit
             return row;
         }
 
-        // 开关：先拨过去，后台真去开、关；没成就拨回来、摇一下，托盘弹一句原因。成了告诉本机页那一行跟着变
+        // 开关：先拨过去，后台真去开、关；没成就拨回来、摇一下，托盘弹一句原因。成了告诉设置页那一行跟着变
         Border Switch(FrameworkElement icon, IconView glyph, string text, bool on, Func<bool, string> turn)
         {
             var t = new Toggle(th, on) { LayoutTransform = new ScaleTransform(0.78, 0.78) };

@@ -306,13 +306,14 @@ namespace TailOrbit
         }
     }
 
-    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、深浅色、剪贴板互通、和 Mac 共用剪贴板、自动下载更新
+    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、深浅色、剪贴板互通、和 Mac 共用剪贴板、在手机上收听本机声音、自动下载更新、
+    // 在不信任的网络上自动使用的出口节点和信任的网络
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
-        static readonly HashSet<string> watch = new HashSet<string>();
-        static string language = "auto", theme = "auto", clipKey = "";
-        static bool clipOn, syncMac, autoUpdate;
+        static readonly HashSet<string> watch = new HashSet<string>(), trusted = new HashSet<string>();
+        static string language = "auto", theme = "auto", clipKey = "", autoExitNode = "", autoExitActive = "";
+        static bool clipOn, syncMac, autoUpdate, soundOn;
 
         static Settings()
         {
@@ -328,6 +329,11 @@ namespace TailOrbit
                 clipOn = true.Equals(Tailscale.Get(o, "clip"));
                 clipKey = (Tailscale.Get(o, "clipKey") as string) ?? "";
                 syncMac = true.Equals(Tailscale.Get(o, "syncMac"));
+                soundOn = true.Equals(Tailscale.Get(o, "sound"));
+                autoExitNode = (Tailscale.Get(o, "autoExitNode") as string) ?? "";
+                autoExitActive = (Tailscale.Get(o, "autoExitActive") as string) ?? "";
+                var nets = Tailscale.Get(o, "trustedNets") as object[];
+                if (nets != null) foreach (var s in nets.OfType<string>()) trusted.Add(s);
             }
             catch (ArgumentException e) { Log.Write(e); }   // 文件坏了：当成没设置过，下次保存时覆盖
             catch (IOException e) { Log.Write(e); }
@@ -383,7 +389,38 @@ namespace TailOrbit
             set { syncMac = value; Save(); }
         }
 
-        // 剪贴板网址里的随机码：第一次用时生成，关了再开不变（手机上的书签、快捷指令照样能用）
+        public static bool SoundOn
+        {
+            get { return soundOn; }
+            set { soundOn = value; Save(); }
+        }
+
+        // 在不信任的网络上自动使用的出口节点（IP；"" 是不自动用）
+        public static string AutoExitNode
+        {
+            get { return autoExitNode; }
+            set { autoExitNode = value; Save(); }
+        }
+
+        // TailOrbit 自己打开、回到信任的网络时要关掉的出口节点（IP；"" 是没有）：重启程序也得记着
+        public static string AutoExitActive
+        {
+            get { return autoExitActive; }
+            set { autoExitActive = value; Save(); }
+        }
+
+        // 信任的网络：Windows 给每个网络的编号
+        public static IEnumerable<string> TrustedNets { get { return trusted; } }
+        public static bool Trusted(string net) { return trusted.Contains(net); }
+
+        public static void SetTrusted(string net, bool on)
+        {
+            if (on) trusted.Add(net);
+            else trusted.Remove(net);
+            Save();
+        }
+
+        // 剪贴板网址里的随机码（收听本机声音的网址也用它）：第一次用时生成，关了再开不变（手机上的书签、快捷指令照样能用）
         public static string ClipKey
         {
             get
@@ -405,7 +442,11 @@ namespace TailOrbit
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FilePath));
                 string temp = FilePath + ".tmp";
-                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac } };
+                var o = new Dictionary<string, object>
+                {
+                    { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac }, { "sound", soundOn },
+                    { "autoExitNode", autoExitNode }, { "autoExitActive", autoExitActive }, { "trustedNets", trusted.ToList() }
+                };
                 File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));
                 if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
                 else File.Move(temp, FilePath);

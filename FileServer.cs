@@ -1,7 +1,7 @@
 // 分享用的小文件服务：只听本机 127.0.0.1:46213，Tailscale 把 https://<本机>:7443/s/<随机码>/… 转发成 /<随机码>/…。
 // 只认登记过的随机码；路径里有 ..、反斜杠、冒号的一律不给；隐藏文件和点开头的文件不给；
 // 从 Funnel（互联网）进来的请求只给已经公开、还没到点的分享。TailOrbit 没在跑时链接打不开，文件也就不会被拿走。
-// /c/<随机码>/ 是剪贴板互通（ClipShare.cs），整条交给它
+// /c/<随机码>/ 是剪贴板互通（ClipShare.cs），/a/<随机码>/ 是在手机上收听本机声音（SoundShare.cs），整条交给它们
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -71,6 +71,7 @@ namespace TailOrbit
                 using (c)
                 {
                     c.ReceiveTimeout = 15000;
+                    c.NoDelay = true;   // 声音流一次只写 10 毫秒的一小段：别等对方回了确认才发下一段
                     var s = c.GetStream();
                     byte[] rest;
                     string head = ReadHead(s, out rest);
@@ -127,6 +128,7 @@ namespace TailOrbit
             string accept;
             visitor = L.FromCulture(headers.TryGetValue("Accept-Language", out accept) ? accept : "");
             if (first[1].StartsWith("/c/")) { ClipShare.Serve(s, first[0], first[1], headers, early); return; }
+            if (first[1].StartsWith("/a/")) { SoundShare.Serve(s, first[0], first[1], headers); return; }
             bool headOnly = first[0] == "HEAD";
             if (first[0] != "GET" && !headOnly) { Reply(s, 405, false); return; }
             var parts = Segments(first[1]);

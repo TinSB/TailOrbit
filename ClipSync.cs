@@ -44,9 +44,9 @@ namespace TailOrbit
 
     static class ClipSync
     {
-        const string Marker = "TailOrbit.Synced";   // 本机剪贴板里“这是从 Mac 同步来的”
+        public const string Marker = "TailOrbit.Synced";   // 本机剪贴板里“这是从 Mac 同步来的”
         const int MaxChars = 1000000;
-        const int MaxPng = 32 << 20;                // 超过 32 MB 的图片不传：iPhone 的照片之类转成 PNG 能上百 MB
+        public const int MaxPng = 32 << 20;                // 超过 32 MB 的图片不传：iPhone 的照片之类转成 PNG 能上百 MB
 
         // Mac 上的看守。每 0.3 秒看一眼变化编号，变了就报“clip 编号 种类 内容 是不是密码(1/0)”：种类 text 是文字、image 是 PNG 图片，
         // 内容是 base64；big 是太大没传的图片，内容是字节数；- 是不传的（文件、刚同步来的）。
@@ -92,7 +92,7 @@ for (;;) {
         static string last;            // 两边现在共有的那一份的 Key。只在界面线程上碰
         static bool missed;            // 断开时本机复制过：接上后补给 Mac。只在界面线程上碰
 
-        public static event Action Changed;   // 连上、断开：本机页那一行跟着变
+        public static event Action Changed;   // 连上、断开：设置页那一行跟着变
         public static string Peer { get { var d = mac; return d == null ? null : d.Name; } }
         public static string Problem { get; private set; }   // 连不上时 ssh 说的原因
 
@@ -281,13 +281,14 @@ for (;;) {
         // Mac 那边复制了：放进本机剪贴板（带上记号，免得再传回去），星网上从 Mac 往本机流一下
         static void Take(Device d, ClipItem c)
         {
-            if (c.Key == last || !Put(c)) return;
+            if (c.Key == last || !Put(c, true)) return;
             last = c.Key;
             host.ClipFlow(d.Ip, true);
         }
 
-        // 图片放两份：PNG 原样（浏览器、Office 认它，透明也在），再放一份位图给只认位图的程序（画图之类）
-        static bool Put(ClipItem c)
+        // 放进本机剪贴板。图片放两份：PNG 原样（浏览器、Office 认它，透明也在），再放一份位图给只认位图的程序（画图之类）。
+        // synced：带上“从 Mac 同步来的”记号，不再传回 Mac、也不推给手机（iPhone 发来的不带，照常同步给 Mac）
+        public static bool Put(ClipItem c, bool synced)
         {
             var data = new DataObject();
             if (c.Png == null) data.SetText(ClipShare.Windows(c.Text));
@@ -296,7 +297,7 @@ for (;;) {
                 data.SetData("PNG", new MemoryStream(c.Png));
                 data.SetImage(BitmapFrame.Create(new MemoryStream(c.Png), BitmapCreateOptions.None, BitmapCacheOption.OnLoad));
             }
-            data.SetData(Marker, new MemoryStream(new byte[] { 1 }));
+            if (synced) data.SetData(Marker, new MemoryStream(new byte[] { 1 }));
             if (c.Secret)   // Mac 那边是密码：本机也别进剪贴板历史、别同步到云
             {
                 data.SetData("ExcludeClipboardContentFromMonitorProcessing", new MemoryStream(new byte[] { 1 }));
@@ -340,8 +341,8 @@ for (;;) {
             Task.Run(() => Push());
         }
 
-        // 本机剪贴板里能传的：先看文字（Excel 复制表格时文字、图片都有，要的是文字），没有文字再看图片
-        static ClipItem Read()
+        // 本机剪贴板里能传的：先看文字（Excel 复制表格时文字、图片都有，要的是文字），没有文字再看图片。在界面线程上调
+        public static ClipItem Read()
         {
             bool secret;
             string text = ClipShare.Peek(out secret);

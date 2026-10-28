@@ -50,7 +50,7 @@ namespace TailOrbit
         readonly FlowLayer flow, flowIn;
 
         // 分页：星网是首页，其余几页第一次切过去时才建
-        static readonly string[] PageKeys = { "home", "share", "net", "drive", "device", "settings" };
+        static readonly string[] PageKeys = { "home", "share", "net", "drive", "settings" };
         readonly Grid home = new Grid();
         readonly Dictionary<string, FrameworkElement> pages = new Dictionary<string, FrameworkElement>();
         Segmented tabs;
@@ -1206,7 +1206,7 @@ namespace TailOrbit
 
         FrameworkElement Tabs()
         {
-            tabs = new Segmented(th, new[] { L.T("星网"), L.T("分享"), L.T("网络"), L.T("云盘"), L.T("本机"), L.T("设置") }, 0, false, false, 32, true) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 7, 0, 0) };
+            tabs = new Segmented(th, new[] { L.T("星网"), L.T("分享"), L.T("网络"), L.T("云盘"), L.T("设置") }, 0, false, false, 32, true) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 7, 0, 0) };
             tabs.Picked += i => Switch(PageKeys[i]);
             return tabs;
         }
@@ -1222,7 +1222,6 @@ namespace TailOrbit
                 case "share": return new SharePage(host);
                 case "net": return new NetPage(host, ip => { Node n; return nodes.TryGetValue(ip, out n) ? n.Angle : double.NaN; });   // 设备方向跟星网一致
                 case "drive": return new DrivePage(host);
-                case "device": return new DevicePage(host);
                 case "settings": return new SettingsPage(host);
                 default: return null;
             }

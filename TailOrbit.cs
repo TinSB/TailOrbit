@@ -2,11 +2,14 @@
 // 主界面（MainWindow.cs、Star.cs）：点托盘图标或开始菜单打开。“星网”——本机在中间，设备按直连 / 中继 / 离线排在三圈上；
 // 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、网页、发文件、复制域名、掉线提醒）；
 // 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。退出在托盘菜单。
-// 设置页（SettingsPage.cs）：深浅色、开机自启、界面语言、两个剪贴板开关；检查更新、自动下载更新（Updates.cs，从 GitHub 发布页下载安装程序）。
+// 设置页（SettingsPage.cs）：本机在 Tailscale 里的名字和地址、出口节点、Tailscale 的常用开关；深浅色、开机自启、界面语言、两个剪贴板开关、收听本机声音；
+// 检查更新、自动下载更新（Updates.cs，从 GitHub 发布页下载安装程序）。
 // 待送（Outbox.cs）：离线的设备也能拖上去，文件先排着、在它旁边绕着转，对方一上线自动发过去。
+// 自动出口节点（AutoExit.cs）：连上不信任的网络时自动改走设置页里选好的出口节点，回到信任的网络再关掉。
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
+// 在手机上收听本机声音（SoundShare.cs）：自己的手机打开一个网页，就用手机和连着它的耳机听这台电脑正在放的声音，只差几十毫秒。
 // 托盘菜单（TrayMenu.cs）：右键托盘图标，打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
 // 环礁接口（Island.cs）：给屏幕顶上的通知岛用的本机接口——设备列表、发文件、收发进度和剪贴板动静；岛连着时不弹托盘通知。
 // 安装、卸载（Setup.cs）：发布的 TailOrbit-Setup-<版本>.exe 就是本程序改了名，双击装到 %LOCALAPPDATA%\Programs\TailOrbit；从“设置 → 应用”卸载。
@@ -92,7 +95,7 @@ namespace TailOrbit
     static class Warm
     {
         // 先编最先会用到的：星网、设备菜单、各页，再是快捷面板和二维码，其余按原顺序
-        static readonly string[] First = { "MainWindow", "Node", "Fan", "Kit", "Segmented", "NetPage", "DevicePage", "SharePage", "DrivePage", "QuickPanel", "Qr" };
+        static readonly string[] First = { "MainWindow", "Node", "Fan", "Kit", "Segmented", "NetPage", "SettingsPage", "SharePage", "DrivePage", "QuickPanel", "Qr" };
         const BindingFlags All = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
         public static void Start(Action done)
@@ -1131,6 +1134,7 @@ namespace TailOrbit
             // 分享出去的文件由本程序提供；公开的到点关掉（程序没开时到点的，下次启动先关）
             FileServer.Start();
             ClipShare.Start(this);
+            SoundShare.Start(this);
             ClipSync.Start(this);
             Island.Start(this);
             var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
@@ -1141,6 +1145,7 @@ namespace TailOrbit
             Alerts.Start(this);
             Outbox.Start(this);
             Updates.Start(this);
+            AutoExit.Start(this);
             if (showMain) ShowMain();
             // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好、备好托盘菜单、把主界面建好并读一遍设备，
             // 第一次按 Ctrl+Alt+A、第一次右键托盘、第一次点开主界面都少等一截
@@ -1312,7 +1317,7 @@ namespace TailOrbit
         {
             if (msg == 0x031D)   // WM_CLIPBOARDUPDATE：等系统发完这条通知再去读剪贴板
             {
-                panel.Dispatcher.BeginInvoke(new Action(ClipSync.Copied));
+                panel.Dispatcher.BeginInvoke(new Action(() => { ClipSync.Copied(); ClipShare.Copied(); }));
                 return IntPtr.Zero;
             }
             if (msg != 0x0312) return IntPtr.Zero;   // WM_HOTKEY
@@ -1334,10 +1339,12 @@ namespace TailOrbit
             return IntPtr.Zero;
         }
 
-        // island：这件事环礁上也看得到（收发文件、剪贴板经过），岛连着时右下角就不再弹
+        // island：这件事环礁上也看得到（收发文件、剪贴板经过），岛连着时右下角就不再弹；
+        // 岛接手了通知时，其余的也交给岛弹，右下角都不弹
         public void Notify(string title, string text, bool island = false, Action click = null)
         {
             if (island && Island.Connected) return;
+            if (Island.Notice(title, text, click)) return;
             balloonClick = click;
             tray.ShowBalloonTip(4000, title, text, WinForms.ToolTipIcon.None);
         }

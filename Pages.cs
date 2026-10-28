@@ -1,13 +1,15 @@
-// 主界面除星网以外的几页（分享、网络、云盘、本机、设置）共用的底板和小零件：开关、分段选择、按钮、复制行
+// 主界面除星网以外的几页（分享、网络、云盘、本机、设置）共用的底板和小零件：开关、分段选择、按钮、复制行、设置分组、弹出列表
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Shell;
 
@@ -121,6 +123,79 @@ namespace TailOrbit
             k.Margin = new Thickness(0, 0, 12, 0);   // 名目长时别贴着右边的值
             value.HorizontalAlignment = HorizontalAlignment.Right;
             return new Border { Height = 42, BorderBrush = th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = Ui.Columns(0, k, value) };
+        }
+
+        // 一组设置：一块圆角底板，一行一项，中间细线隔开
+        public static Border Group(Theme th, params Border[] rows)
+        {
+            var stack = new StackPanel();
+            for (int i = 0; i < rows.Length; i++)
+            {
+                if (i > 0) stack.Children.Add(new Border { Height = 1, Background = th.Hair, Margin = new Thickness(18, 0, 18, 0) });
+                double top = i == 0 ? 14 : 0, bottom = i == rows.Length - 1 ? 14 : 0;   // 悬停时的底色别从圆角里漏出来
+                rows[i].CornerRadius = new CornerRadius(top, top, bottom, bottom);
+                stack.Children.Add(rows[i]);
+            }
+            return new Border { CornerRadius = new CornerRadius(14), Background = th.Tile, Child = stack };
+        }
+
+        // 一行设置：左边说法，右边开关或当前值，悬停变亮；没改成时拿它的 RenderTransform 摇一下
+        public static Border Row(Theme th, string text, FrameworkElement end)
+        {
+            var label = Text(text, 14.5, th.Fg);
+            label.Margin = new Thickness(0, 0, 12, 0);
+            // 有的语言说法长：放不下换到第二行，再放不下才截
+            label.TextWrapping = TextWrapping.Wrap;
+            label.LineHeight = 19;
+            label.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            label.MaxHeight = 40;
+            var row = new Border { Height = 56, Padding = new Thickness(18, 0, 16, 0), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Ui.Columns(0, label, end), RenderTransform = new TranslateTransform() };
+            row.MouseEnter += delegate { row.Background = th.Chip; };
+            row.MouseLeave += delegate { row.Background = Brushes.Transparent; };
+            return row;
+        }
+
+        // 点一行在它下面弹出的一列选项：第一项（“跟随系统”“关”）下面隔一道细线，选中的打勾，notes 是右边的灰字；点了先收起再回调。
+        // 太长（比如开了 Mullvad 有上百个出口节点）就用滚轮翻
+        public static Popup Choices(Theme th, FrameworkElement anchor, double width, string[] items, string[] notes, int selected, Action<int> picked)
+        {
+            var popup = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = Ui.RightUnder(anchor, width), VerticalOffset = 4 };
+            var list = new StackPanel();
+            for (int i = 0; i < items.Length; i++)
+            {
+                int k = i;
+                var note = Text(notes == null ? "" : notes[i] ?? "", 13, th.Mute);
+                note.Margin = new Thickness(10, 0, 8, 0);
+                FrameworkElement mark = i == selected ? (FrameworkElement)new IconView("check", 15, th.Fg, 2.2) : new Border { Width = 15 };
+                var item = new Border { Height = 38, Padding = new Thickness(12, 0, 10, 0), CornerRadius = new CornerRadius(9), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = Ui.Columns(0, Text(items[i], 14, th.Fg), note, mark) };
+                item.MouseEnter += delegate { item.Background = th.Hair; };
+                item.MouseLeave += delegate { item.Background = Brushes.Transparent; };
+                item.MouseLeftButtonUp += delegate
+                {
+                    popup.IsOpen = false;
+                    if (k != selected) picked(k);
+                };
+                list.Children.Add(item);
+                if (i == 0) list.Children.Add(new Border { Height = 1, Background = th.Hair, Margin = new Thickness(8, 4, 8, 4) });
+            }
+            Pop(th, popup, new ScrollViewer { Content = list, MaxHeight = 420, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false }, width, 16, new Thickness(6), 14);
+            return popup;
+        }
+
+        // 弹出的卡片：浮在页面上、带阴影，淡入时往下落一点。pad 是给阴影留的边
+        public static void Pop(Theme th, Popup popup, UIElement content, double width, double pad, Thickness padding, double radius)
+        {
+            var shift = new TranslateTransform();
+            var card = new Border
+            {
+                Width = width, Margin = new Thickness(pad), Padding = padding, CornerRadius = new CornerRadius(radius), Background = th.Pop, BorderBrush = th.Hair, BorderThickness = new Thickness(1),
+                Child = content, RenderTransform = shift, Effect = new DropShadowEffect { Color = Colors.Black, Direction = 270, ShadowDepth = 10, BlurRadius = 28, Opacity = th.Dark ? 0.35 : 0.16 }
+            };
+            TextElement.SetFontFamily(card, Ui.TextFont);
+            popup.Child = card;
+            popup.IsOpen = true;
+            Ui.AnimFrom(card, UIElement.OpacityProperty, 0, 1, 150);
+            Ui.AnimFrom(shift, TranslateTransform.YProperty, -6, 0, 260, 0, MainEase.Settle);
         }
 
         // 圆角虚线框：还没有、还没开的东西

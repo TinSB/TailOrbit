@@ -1,6 +1,6 @@
 // 没装 Tailscale 时替用户装上：从 Tailscale 官网下载对应处理器的安装包，确认签名有效、签名者是 Tailscale Inc.，
 // 再交给 msiexec 安装（会弹一次管理员确认）。装好打开 Tailscale，登录交给它自己的提示。
-// 安装程序、主界面各页、快捷面板“未安装 Tailscale”的地方共用这一份
+// 安装程序、主界面各页、快捷面板“未安装 Tailscale”的地方共用这一份；设置页的“更新 Tailscale”也走它（装新版就是覆盖安装）
 using System;
 using System.ComponentModel;
 using System.Diagnostics;

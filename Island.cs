@@ -1,4 +1,5 @@
-// 给“环礁”（屏幕顶上正中的通知岛）开的本机接口：设备列表、发文件，以及收发进度、剪贴板动静的事件流。说明在环礁那边的 docs/tailorbit-api.md。
+// 给“环礁”（屏幕顶上正中的通知岛）开的本机接口：设备列表、发文件，以及收发进度、剪贴板动静的事件流；岛订阅时说要通知（?notices=1），
+// TailOrbit 的通知就改由岛来弹、右下角不再弹。说明在环礁那边的 docs/tailorbit-api.md。
 // 只听 127.0.0.1:46214——46213 被 tailscale serve 转发到 tailnet，从那进来的请求也像本机发的，分不清。
 // 每次启动换一把随机令牌写进 island.json，请求要带它；带 Origin 头的（网页发来的）、Host 不对的（DNS rebinding）一律不理
 using System;
@@ -23,6 +24,7 @@ namespace TailOrbit
         static readonly string ConfigPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "island.json");
         static readonly object gate = new object();
         static readonly List<Queue<string>> clients = new List<Queue<string>>();         // 每条事件流一个待发队列
+        static readonly HashSet<Queue<string>> takers = new HashSet<Queue<string>>();   // 其中接手了通知的（订阅时带 ?notices=1）
         static readonly Dictionary<int, SendJob> jobs = new Dictionary<int, SendJob>();   // 还没结束的发送，取消时按编号找
         static readonly Dictionary<string, Pace> paces = new Dictionary<string, Pace>();
         static List<Device> known = new List<Device>();   // 最近一次的设备：剪贴板动静按 IP 找名字
@@ -30,6 +32,8 @@ namespace TailOrbit
         static Host host;
         static string token;
         static Timer poll, flush;
+        static int noticeId;      // 最近一条交给岛的通知
+        static Action noticeClick; // 和点它要做的事：跟托盘通知一样只管最新一条
 
         // 一次收发的进度节奏：状态变了马上发，进度最多每 200 毫秒一条，压下的最后一条过一会儿补上
         class Pace
@@ -109,11 +113,14 @@ namespace TailOrbit
             string at, auth;
             if (headers.ContainsKey("Origin") || !headers.TryGetValue("Host", out at) || at != "127.0.0.1:" + Port) { Reply(s, 403, null); return; }
             if (!headers.TryGetValue("Authorization", out auth) || !Same(auth, "Bearer " + token)) { Reply(s, 401, null); return; }
-            string method = first[0], path = first[1];
+            string method = first[0], path = first[1], query = "";
+            int mark = path.IndexOf('?');
+            if (mark >= 0) { query = path.Substring(mark + 1); path = path.Substring(0, mark); }
             if (path == "/v1/devices" && method == "GET") Devices(s);
-            else if (path == "/v1/events" && method == "GET") Events(s);
+            else if (path == "/v1/events" && method == "GET") Events(s, query.Split('&').Contains("notices=1"));
             else if (path == "/v1/send" && method == "POST") Send(s, headers, early);
             else if (path.Length > 16 && path.StartsWith("/v1/send/") && path.EndsWith("/cancel") && method == "POST") Cancel(s, path.Substring(9, path.Length - 16));
+            else if (path.Length > 18 && path.StartsWith("/v1/notices/") && path.EndsWith("/click") && method == "POST") Click(s, path.Substring(12, path.Length - 18));
             else Reply(s, 404, null);
         }
 
@@ -241,13 +248,14 @@ namespace TailOrbit
 
         // ---------- 事件流 ----------
 
-        // 一直开着：有事件就发 data 行，15 秒没事发一行 ping。写不出去说明岛断了
-        static void Events(Stream s)
+        // 一直开着：有事件就发 data 行，15 秒没事发一行 ping。写不出去说明岛断了。notices：岛接手通知
+        static void Events(Stream s, bool notices)
         {
             var q = new Queue<string>();
             lock (gate)
             {
                 clients.Add(q);
+                if (notices) takers.Add(q);
                 if (clients.Count == 1) poll.Change(PollMs, Timeout.Infinite);
             }
             try
@@ -265,7 +273,7 @@ namespace TailOrbit
                     Write(s, batch.Length == 0 ? ": ping\n\n" : string.Concat(batch.Select(m => "data: " + m + "\n\n")));
                 }
             }
-            finally { lock (gate) clients.Remove(q); }
+            finally { lock (gate) { clients.Remove(q); takers.Remove(q); } }
         }
 
         static void Broadcast(string json)
@@ -337,6 +345,32 @@ namespace TailOrbit
             };
             if (s.Files != null) o["files"] = s.Files;
             Paced("receive:" + s.Id, state, s.Done, Json(o));
+        }
+
+        // 有岛接手通知：这条交给岛弹，返回 true，右下角就不弹了；action 告诉岛点它有没有用
+        public static bool Notice(string title, string text, Action click)
+        {
+            lock (gate)
+            {
+                if (takers.Count == 0) return false;
+                noticeId++;
+                noticeClick = click;
+                string json = Json(new Dictionary<string, object> { { "type", "notice" }, { "id", noticeId.ToString() }, { "title", title }, { "text", text ?? "" }, { "action", click != null } });
+                foreach (var q in takers) q.Enqueue(json);
+                Monitor.PulseAll(gate);
+                return true;
+            }
+        }
+
+        // 岛上点了一条通知：是最新那条、点了有事做，就回界面线程去做（比如打开设置页）
+        static void Click(Stream s, string id)
+        {
+            Action a = null;
+            lock (gate)
+                if (id == noticeId.ToString()) { a = noticeClick; noticeClick = null; }
+            if (a == null) { Reply(s, 404, null); return; }
+            Application.Current.Dispatcher.BeginInvoke(a);
+            Reply(s, 204, null);
         }
 
         // 剪贴板经过了这台设备：inward＝对方的剪贴板写进了这台电脑，否则是对方读走了这台电脑的。不带内容

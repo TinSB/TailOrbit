@@ -1,5 +1,5 @@
 // 界面文字的多语言：代码里写的就是简体中文原文，别的语言按原文查表（i18n\<代码>.json，编译时嵌进程序）。
-// 查不到的照原文显示；带 {0} 的用 string.Format 填。默认跟着系统语言，本机页可以手动换
+// 查不到的照原文显示；带 {0} 的用 string.Format 填。默认跟着系统语言，设置页可以手动换
 using System;
 using System.Collections.Generic;
 using System.Globalization;

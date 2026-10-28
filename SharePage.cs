@@ -975,7 +975,7 @@ namespace TailOrbit
 
         Color ChipColor { get { return ((SolidColorBrush)Th.Chip).Color; } }
 
-        public static readonly Brush QrPaper = Frozen(Color.FromRgb(0xF4, 0xF5, 0xF6)), QrInk = Frozen(Color.FromRgb(0x1A, 0x1C, 0x1F));   // 本机页的剪贴板二维码也用
+        public static readonly Brush QrPaper = Frozen(Color.FromRgb(0xF4, 0xF5, 0xF6)), QrInk = Frozen(Color.FromRgb(0x1A, 0x1C, 0x1F));   // 设置页的剪贴板二维码也用
 
         static Brush Frozen(Color c)
         {

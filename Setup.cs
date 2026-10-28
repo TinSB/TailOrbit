@@ -114,11 +114,12 @@ namespace TailOrbit
             try
             {
                 Stop();
-                // 在 tailscale serve 上挂的转发（文件分享、剪贴板互通）撤掉；Tailscale 没在跑就撤不了，留下的转发也只是打不开
+                // 在 tailscale serve 上挂的转发（文件分享、剪贴板互通、收听本机声音）撤掉；Tailscale 没在跑就撤不了，留下的转发也只是打不开
                 try
                 {
                     foreach (var e in Shares.Load() ?? new List<ServeEntry>()) if (e.Mine != null) Shares.Stop(e);
                     ClipShare.Turn(false);
+                    SoundShare.Turn(false);
                 }
                 catch (Win32Exception) { }   // 没装 Tailscale
                 using (var k = Registry.CurrentUser.OpenSubKey(Autostart.RunKey, true))

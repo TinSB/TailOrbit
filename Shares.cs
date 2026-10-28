@@ -139,7 +139,7 @@ namespace TailOrbit
                         var cfg = h.Value as Dictionary<string, object>;
                         var e = new ServeEntry { Host = hp.Key.Substring(0, colon), Port = port, Path = h.Key, Https = !true.Equals(Tailscale.Get(portCfg, "HTTP")), Public = funnel != null && true.Equals(Tailscale.Get(funnel, hp.Key)) };
                         string proxy = Tailscale.Get(cfg, "Proxy") as string, path = Tailscale.Get(cfg, "Path") as string;
-                        if (port == PrivatePort && e.Path.StartsWith("/c/") && proxy == Origin + e.Path) continue;   // 剪贴板互通的转发：在本机页开关，不算分享
+                        if (port == PrivatePort && (e.Path.StartsWith("/c/") || e.Path.StartsWith("/a/")) && proxy == Origin + e.Path) continue;   // 剪贴板互通、收听本机声音的转发：在设置页开关，不算分享
                         if (proxy != null) { e.Kind = "proxy"; e.Target = proxy; }
                         else if (path != null) { e.Kind = "path"; e.Target = path; }
                         else { e.Kind = "text"; e.Target = (Tailscale.Get(cfg, "Text") as string) ?? ""; }
