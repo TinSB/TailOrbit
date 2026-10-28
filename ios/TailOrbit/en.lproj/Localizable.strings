@@ -1,0 +1,24 @@
+/* 界面文字：键就是中文原文 */
+"%@ 的声音" = "Sound from %@";
+"自动收听" = "Auto listen";
+"自动收听已关闭" = "Auto listen is off";
+"没有设置电脑的地址" = "No PC address is set";
+"连上 Wi-Fi 才会收听" = "Connect to Wi-Fi to listen";
+"戴上耳机就能听" = "Put on your headphones to listen";
+"正在连接电脑…" = "Connecting to your PC…";
+"连不上电脑" = "Can't reach your PC";
+"找不到电脑：手机上的 Tailscale 开着吗？" = "Can't find your PC. Is Tailscale on?";
+"电脑上的 TailOrbit 没有运行" = "TailOrbit isn't running on your PC";
+"等电脑出声" = "Waiting for sound from your PC";
+"正在播放" = "Playing";
+"允许定位，才能在后台等电脑出声" = "Allow location so the app can wait in the background";
+"共用剪贴板" = "Share clipboard";
+"发到电脑" = "Send to PC";
+"正在发到电脑…" = "Sending to PC…";
+"已发到电脑" = "Sent to PC";
+"图片" = "Image";
+"只有同一个 Tailscale 账号的设备能用" = "Only devices on the same Tailscale account can use this";
+"电脑上的剪贴板互通没打开" = "Clipboard sharing is off on your PC";
+"太大了，电脑不收" = "Too large for your PC";
+"电脑认不出这张图" = "Your PC can't read this image";
+"电脑的剪贴板正忙，再试一次" = "Your PC's clipboard is busy. Try again.";

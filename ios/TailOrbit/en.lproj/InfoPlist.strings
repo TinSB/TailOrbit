@@ -1,0 +1,2 @@
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "Only used to keep TailOrbit running in the background so your PC's sound plays right away. Your location is never stored or sent.";
+"NSLocationWhenInUseUsageDescription" = "Only used to keep TailOrbit running in the background so your PC's sound plays right away. Your location is never stored or sent.";

@@ -1,0 +1,8 @@
+// iPhone App 的编译设置。签名团队、收听网址、手机编号（要换包名也一样）写在同目录的 Local.xcconfig，它不进仓库，例如：
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   TAILORBIT_URL = https:/$()/pc.example.ts.net:7443/a/<随机码>/
+//   TAILORBIT_DEVICE = <手机的 UDID，mac.sh 装 App 时用>
+// 网址就是 TailOrbit 设置页“在手机上收听本机声音”给的那个；xcconfig 里 // 是注释，所以写成 https:/$()/
+PRODUCT_BUNDLE_IDENTIFIER = io.github.tinsb.tailorbit
+TAILORBIT_URL =
+#include? "Local.xcconfig"

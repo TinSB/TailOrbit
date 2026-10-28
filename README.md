@@ -21,7 +21,7 @@
 
 TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小工具。打开它，你的设备会围着这台电脑排成一张星图；把文件拖到哪台设备上，就用 Taildrop 发给哪台。
 
-窗口顶上有六页：星网、分享、网络、云盘、本机、设置，用 `Ctrl+1` 到 `Ctrl+6` 切换。
+窗口顶上有五页：星网、分享、网络、云盘、设置，用 `Ctrl+1` 到 `Ctrl+5` 切换。
 
 ### 发文件、收文件
 
@@ -56,19 +56,28 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 - 拿电脑的：「获取 URL 内容」（网址就是二维码里那个，末尾加上 `raw`）→「拷贝至剪贴板」。电脑剪贴板里是图片时这个网址拿不到字，中间最好加一个「如果…有任何值」，不然会把手机剪贴板清空。
 - 发给电脑：「获取剪贴板」→「文本」→「获取 URL 内容」，方法选 POST，请求体选「文件」，放进上一步的文本。
 
+装了配套的 iPhone App（见「用手机听电脑的声音」）就不用扫码、也不用做快捷指令：App 在后台连着这台电脑，这边一复制，文字或图片就放进 iPhone 的剪贴板，不用打开 App，直接粘贴就行。反过来，在 iPhone 上复制后打开 App 点「粘贴」就发过来了：iOS 不许 App 在后台读剪贴板，这一步得点一下。密码传到 iPhone 上只留在那台手机里，两分钟后自动清掉。
+
 **与 Mac 共享剪贴板**是给 Mac 用的。打开后，这台电脑和 Mac 就像在用同一个剪贴板：在哪边复制，两边都能粘贴。文字和图片（比如截图）都传，复制文件不传；超过 32 MB 的图片也不传，会弹个通知，这种用「发送文件」发。它用 `~/.ssh/config` 里 Mac 的别名连过去，所以 Mac 要打开「远程登录」，Mac 上不用装任何东西。开关旁边的小电脑亮着，说明连上了。Mac 合盖睡着时会断开，醒来后自动连回，中间复制过的东西会补过去。如果 iPhone 和 Mac 登录的是同一个 Apple 账号、也开着接力，iPhone 上复制的东西也会经 Mac 一起过来。
 
 不想一直同步的话，也可以只在需要时按 `Win+Alt+V`，把 Mac 剪贴板里的字读到这台电脑上。
 
 剪贴板只在你自己的设备之间走：只有登录同一个 Tailscale 账号的设备能读，不经过 Funnel，也不上互联网，内容不会存到硬盘上。密码也照样能传；在两台电脑之间传时它仍然标着是密码，不会进剪贴板历史。
 
+### 用手机听电脑的声音
+
+「设置」页的「在手机上收听本机声音」打开后也会弹出一个二维码。用登录了 Tailscale 的手机扫一下，点中间的圆钮，手机（和连着它的耳机，比如 AirPods）就开始放这台电脑正在放的声音。声音不压缩，只攒几十毫秒就放，网络抖了才多攒一点；圆钮下面的「缓冲」就是现在攒了多少。蓝牙耳机自己还会再慢一些。
+
+电脑这边照常出声。声音是 16 位立体声，大约每秒 190 KB，用手机流量听一小时约 0.7 GB。和剪贴板一样，只有你自己账号的设备能打开，不经过 Funnel。
+
+不想每次扫码、点按钮，可以装配套的 iPhone App（在 `ios/`，要用 Mac 自己编译装上，见「自己编译」）。打开一次、允许定位以后，它就在后台等着：手机连着 Wi-Fi、戴着耳机时，电脑一出声就自动从耳机里放出来，手机上正在放的歌只是被压低一点、不会停；电脑安静 8 秒，它就停下、把耳机让出来。摘了耳机、离开 Wi-Fi 就断开，不费电也不耗流量。它也能和电脑共用剪贴板，见「剪贴板」。App 被从后台划掉或手机重启以后，要再打开一次。
+
 ### 其他几页
 
 - **分享**：把文件或文件夹拖进来，会生成一个只有你自己的设备能打开的链接和二维码；需要的话可以公开到互联网 15 分钟、1 小时或 1 天，时间到了自动关。你用 `tailscale serve`、`funnel` 挂着的东西也都在这页，背后的程序停了会标红。
 - **网络**：每台设备是直连还是中继、延迟多少、现在传得多快；右边是网络检测和需要处理的问题。
 - **云盘**：就是 Tailscale 的 Taildrive。还没开通的话点「立即开通」，照提示在 Tailscale 后台生成一把令牌、点 Copy，TailOrbit 会替你在访问规则里加上需要的两条，用完马上把这把令牌作废。不想交出令牌也行，点「手动修改访问控制」，要加的内容已经替你复制好了。开通以后，把文件夹拖进来就共享给了自己的其他设备，别的设备共享的文件夹也能直接打开。
-- **本机**：这台电脑在 Tailscale 里的名字、地址和账号，出口节点和常用开关。
-- **设置**：界面用浅色、深色还是跟随系统；「开机时自动启动」、界面语言和上面说的两个剪贴板开关；检查更新。
+- **设置**：左边是这台电脑在 Tailscale 里的名字、地址、账号和 Tailscale 版本，有新版本时下面会出现「更新 Tailscale 到 …」，点一下、在管理员确认里点「是」就装好；右边从上往下是出口节点、Tailscale 的常用开关、界面用浅色深色还是跟随系统、「开机时自动启动」和界面语言、上面说的两个剪贴板开关和收听本机声音，最后是检查更新。出口节点可以设成「在不信任的网络上自动使用」：连上咖啡店、机场这类网络时自动改走你选的设备；把家里、公司的网络设成「信任」，回到这些网络时它自己关掉。
 
 ### 安装
 
@@ -84,7 +93,7 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 ### 卸载
 
-在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享和剪贴板互通会一起撤掉；设置和收发记录默认留着，打开「同时删除设置和传输记录」就一起删。
+在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享、剪贴板互通和收听本机声音会一起撤掉；设置和收发记录默认留着，打开「同时删除设置和传输记录」就一起删。
 
 ### 自己编译
 
@@ -103,11 +112,13 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 图标有深浅两份，任务栏、托盘和开始菜单跟着 Windows 的深浅色换，都是 `make-icon.ps1` 画的：改了它再运行一次，会重新生成 `TailOrbit.ico` 和 `TailOrbit-light.ico`。
 
+iPhone App 在 `ios/` 里，要一台装了 Xcode 和 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 的 Mac。在 `ios/` 里新建 `Local.xcconfig`，写上你的签名团队、收听网址（就是设置页给的那个；xcconfig 里 `//` 是注释，要写成 `https:/$()/...`）和手机的设备编号，格式见 `Config.xcconfig` 开头。然后在 Mac 上运行 `./mac.sh devinstall` 编译并装到手机（签名要在 Mac 登录着的桌面里进行，SSH 里会失败），`./mac.sh sim` 在模拟器里试。App 图标也由 `make-icon.ps1 -Ios` 生成。
+
 ### 隐私
 
-TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有三处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；没装 Tailscale、你点了安装时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包；检查更新时会访问 GitHub（`api.github.com` 和它的下载地址）。「自动下载更新」默认关着，不打开的话只有你点「检查更新」时才会连。
+TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有三处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；没装 Tailscale、你点了安装，或者你点了更新 Tailscale 时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包；检查更新时会访问 GitHub（`api.github.com` 和它的下载地址）。「自动下载更新」默认关着，不打开的话只有你点「检查更新」时才会连。
 
-收发记录、排着要发的文件清单、分享列表和设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传，剪贴板的内容也不记录。
+收发记录、排着要发的文件清单、分享列表和设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传，剪贴板的内容和传给手机的声音也不记录。
 
 <details>
 <summary>具体调了哪些命令</summary>
@@ -122,12 +133,14 @@ TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做�
 | 网络检测、流量 | `tailscale netcheck`、`tailscale metrics print` |
 | 云盘 | `tailscale drive`；别的设备的共享通过 Tailscale 自带的 WebDAV（`100.100.100.100:8080`）读 |
 | 开通云盘 | 用你的令牌读出访问规则，只加两条，写回前确认这期间没人改过，最后把令牌作废 |
-| 本机设置 | `tailscale get`、`tailscale set` |
+| 出口节点和 Tailscale 开关 | `tailscale get`、`tailscale set` |
+| 在不信任的网络上自动使用出口节点 | 网络变了时读一次 Windows 的网络列表，认出现在连的是哪个网络，信任的网络只记它的编号；开着这个功能时每 30 秒再用 `tailscale status --json` 看一眼。不在信任的网络上就 `tailscale set --exit-node=<你选的设备>`，回到信任的网络再用 `tailscale set --exit-node=` 关掉。只关它自己打开的；你自己改过出口节点，它就不再管 |
 | 剪贴板互通 | `tailscale serve` 把 7443 端口上一个带随机码的地址转给本机的小服务，只放行你自己账号的设备 |
+| 在手机上收听本机声音 | 转发和放行规则同剪贴板互通；有人在听时才用 Windows 的回环录音取系统正在放的声音，原样推给手机，不存盘；iPhone App 开着最粗的定位（3 公里精度）只是为了能在后台一直等着，位置不存、不发 |
 | 读取 Mac 剪贴板、与 Mac 共享剪贴板 | 经 `ssh` 在 Mac 上跑 `pbpaste` 和一个小脚本；Windows 这边靠系统发来的“剪贴板变了”的通知。两边写进去时都带个记号，不会来回打转 |
 | 设备菜单里的「网页」 | 设备在线时先试连几个常见的网页端口，菜单一打开就知道有没有 |
-| 安装 Tailscale | 从 `pkgs.tailscale.com` 下载对应处理器的 MSI，用 Windows 验证 Authenticode 签名并确认签名者是 Tailscale Inc.，再用 `msiexec` 安装 |
-| 给桌面小组件用的本机接口 | 只听 `127.0.0.1:46214`，每次启动换一把随机令牌，存在 `%LOCALAPPDATA%\TailOrbit\island.json`；能列设备、发文件、看收发进度 |
+| 安装、更新 Tailscale | 从 `pkgs.tailscale.com` 下载对应处理器的 MSI，用 Windows 验证 Authenticode 签名并确认签名者是 Tailscale Inc.，再用 `msiexec` 安装 |
+| 给桌面小组件用的本机接口 | 只听 `127.0.0.1:46214`，每次启动换一把随机令牌，存在 `%LOCALAPPDATA%\TailOrbit\island.json`；能列设备、发文件、看收发进度。小组件说要接手通知时，TailOrbit 的通知交给它显示，不再弹在屏幕右下角 |
 | 检查更新 | 从 `api.github.com` 读最新发布的版本；安装包从 GitHub 下载到 `%LOCALAPPDATA%\TailOrbit\update\`，大小和 SHA-256 要和发布页上写的一样、版本号也对得上才装，装的时候不弹窗口运行它 |
 
 </details>
@@ -142,7 +155,7 @@ TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做�
 
 TailOrbit is a small Windows app for [Tailscale](https://tailscale.com). It lays your devices out as a star map around this PC. Drag a file onto a device and it goes there over Taildrop.
 
-The window has six pages along the top: Orbit, Share, Network, Drive, This PC and Settings. `Ctrl+1` to `Ctrl+6` switch between them.
+The window has five pages along the top: Orbit, Share, Network, Drive and Settings. `Ctrl+1` to `Ctrl+5` switch between them.
 
 ### Sending and receiving
 
@@ -177,19 +190,28 @@ If scanning gets old, make two shortcuts in the iPhone's Shortcuts app and put t
 - Get the PC's clipboard: **Get Contents of URL** (the address from the QR code with `raw` added at the end) → **Copy to Clipboard**. When the PC's clipboard holds an image, that address has no text, so put an **If … has any value** in between, or your phone's clipboard gets wiped.
 - Send to the PC: **Get Clipboard** → **Text** → **Get Contents of URL**, with Method set to POST and Request Body set to File, holding the text.
 
+With the companion iPhone app (see **Listening on your phone**) you can skip the QR code and the shortcuts: the app stays connected to this PC in the background, so whatever you copy here, text or an image, lands on the iPhone's clipboard and you can paste it right away without opening the app. The other way, copy on the iPhone, open the app and tap **Paste**: iOS doesn't let apps read the clipboard in the background, so this takes one tap. Passwords stay on that iPhone only and clear themselves after two minutes.
+
 **Sync clipboard with Mac** is for your Mac. Turn it on and this PC and the Mac act like one clipboard: copy on either, paste on both. Text and images (screenshots, say) come across; copied files don't. Images over 32 MB are skipped with a notification; send those with **Send files**. It connects with the alias for your Mac in `~/.ssh/config`, so Remote Login needs to be on, and nothing is installed on the Mac. The little laptop next to the switch lights up while it's connected. When the Mac sleeps the link drops; when it wakes, TailOrbit reconnects and passes along anything copied in between. If your iPhone and Mac share an Apple Account with Handoff on, whatever you copy on the iPhone comes through the Mac too.
 
 If you'd rather not sync all the time, press `Win+Alt+V` whenever you want to pull the Mac's clipboard onto this PC.
 
 The clipboard only travels between your own devices: only devices signed in to your Tailscale account can read it, nothing goes through Funnel or the internet, and nothing is written to disk. Passwords come along too; between the two computers they stay marked as passwords, so they don't end up in clipboard history.
 
+### Listening on your phone
+
+Turn on **Listen to this PC on your phone** on the Settings page and a QR code pops up too. Scan it with a phone signed in to Tailscale and tap the big round button: the phone, and the earbuds connected to it (AirPods, say), plays whatever this PC is playing. The sound isn't compressed and only a few dozen milliseconds are held back, a little more when the network gets bumpy; **Buffer** under the button shows how much right now. Bluetooth earbuds add their own delay on top.
+
+The PC keeps playing through its own speakers. The stream is 16-bit stereo, about 190 KB a second, so an hour on mobile data is roughly 0.7 GB. As with the clipboard, only devices on your own Tailscale account can open it, and nothing goes through Funnel.
+
+If you'd rather not scan and tap every time, there's a companion iPhone app in `ios/` (you build and install it yourself with a Mac; see **Build it yourself**). Open it once and allow location, and it waits in the background: while the phone is on Wi-Fi and your earbuds are in, whatever the PC plays comes through them automatically, and music already playing on the phone just gets quieter instead of stopping. Eight seconds after the PC goes quiet, it stops and lets go of the earbuds. Take the earbuds out or leave Wi-Fi and it disconnects, so it costs no battery or data. It shares the clipboard with the PC too; see **Clipboard**. If you swipe the app away or restart the phone, open it once more.
+
 ### The other pages
 
 - **Share**: drop a file or folder here to get a link and QR code that only your devices can open. If you need to, make it public on the internet for 15 minutes, an hour or a day; it closes itself when time is up. Anything you already serve with `tailscale serve` or `funnel` shows up here too, and turns red if the program behind it has stopped.
 - **Network**: whether each device is direct or relayed, its latency and how fast it's transferring right now, plus a network check and anything that needs fixing.
 - **Drive**: Tailscale's Taildrive. If it isn't set up yet, click **Enable Drive**, generate an access token in the Tailscale admin console when asked, and click Copy. TailOrbit adds the two entries Taildrive needs to your access rules and revokes the token right away. If you'd rather not hand over a token, choose **Edit access controls manually**; the text to paste is already copied for you. Once it's on, drop a folder in to share it with your other devices, and open the folders they share.
-- **This PC**: this computer's name, addresses and account on Tailscale, the exit node and common switches.
-- **Settings**: light, dark or follow Windows; **Start with Windows**, the interface language and the two clipboard switches; checking for updates.
+- **Settings**: on the left, this computer's name, addresses, account and Tailscale version on Tailscale; when a newer Tailscale is out, **Update Tailscale to …** appears below, and one click plus a Yes in the administrator prompt installs it; on the right, from top to bottom, the exit node, common Tailscale switches, light, dark or follow Windows, **Start with Windows** and the interface language, the two clipboard switches, listening on your phone, and checking for updates. Set the exit node to **Use automatically on untrusted networks** and TailOrbit switches to the device you picked whenever you join a network like a café's or an airport's; mark your home and work networks as trusted and it turns the exit node off again when you're back on them.
 
 ### Install
 
@@ -205,7 +227,7 @@ To update, click **Check for updates** on the Settings page, then **Update now**
 
 ### Uninstall
 
-In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares and shared clipboard it set up in Tailscale are taken down too. Your settings and transfer history are kept unless you turn on **Also delete settings and transfer history**.
+In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares, shared clipboard and phone listening it set up in Tailscale are taken down too. Your settings and transfer history are kept unless you turn on **Also delete settings and transfer history**.
 
 ### Build it yourself
 
@@ -224,11 +246,13 @@ Run `TailOrbit.exe --tray` to start in the tray only; that's how **Start with Wi
 
 The icon comes in a dark and a light version; the taskbar, tray and Start menu switch along with Windows light or dark mode. Both are drawn by `make-icon.ps1`: edit it and run it again to regenerate `TailOrbit.ico` and `TailOrbit-light.ico`.
 
+The iPhone app lives in `ios/` and needs a Mac with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen). Create `ios/Local.xcconfig` with your signing team, the listening address from the Settings page (`//` starts a comment in xcconfig files, so write it as `https:/$()/...`) and your phone's device identifier; the top of `Config.xcconfig` shows the format. Then run `./mac.sh devinstall` on the Mac to build and install it on the phone (signing only works in the Mac's logged-in desktop session, not over SSH), or `./mac.sh sim` to try it in the Simulator. `make-icon.ps1 -Ios` draws the app icon too.
+
 ### Privacy
 
-TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are three exceptions: Drive setup uses the token you give it to call Tailscale's admin API once; if Tailscale isn't installed and you choose to install it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`); and checking for updates contacts GitHub (`api.github.com` and its download servers). **Download updates automatically** is off by default, so unless you turn it on, that only happens when you click **Check for updates**.
+TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are three exceptions: Drive setup uses the token you give it to call Tailscale's admin API once; if you choose to install Tailscale, or to update it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`); and checking for updates contacts GitHub (`api.github.com` and its download servers). **Download updates automatically** is off by default, so unless you turn it on, that only happens when you click **Check for updates**.
 
-Your history, the list of files waiting to be sent, shares and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. Clipboard contents aren't recorded either.
+Your history, the list of files waiting to be sent, shares and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. Clipboard contents and the sound sent to your phone aren't recorded either.
 
 <details>
 <summary>What it runs under the hood</summary>
@@ -243,12 +267,14 @@ Your history, the list of files waiting to be sent, shares and settings stay in 
 | Network check and traffic | `tailscale netcheck`, `tailscale metrics print` |
 | Drive | `tailscale drive`; other devices' shares are read through Tailscale's built-in WebDAV (`100.100.100.100:8080`) |
 | Drive setup | reads your access rules with the token, adds two entries, checks that nobody changed them in the meantime before writing back, then revokes the token |
-| This PC | `tailscale get`, `tailscale set` |
+| Exit node and Tailscale switches | `tailscale get`, `tailscale set` |
+| Use an exit node automatically on untrusted networks | reads the Windows network list when the network changes to tell which network you're on, and keeps only the IDs of trusted networks; while this is on, it also checks `tailscale status --json` every 30 seconds. On an untrusted network it runs `tailscale set --exit-node=<the device you picked>`, and `tailscale set --exit-node=` once you're back on a trusted one. It only turns off an exit node it turned on itself, and leaves things alone once you've changed the exit node yourself |
 | Shared clipboard | `tailscale serve` forwards an address with a random code on port 7443 to the small local server, and only lets in devices on your own account |
+| Listening on your phone | forwarded and limited to your own account the same way as the shared clipboard; only while someone is listening does it use Windows loopback recording to pick up what the PC is playing and pass it straight to the phone, without writing anything to disk; the iPhone app keeps the coarsest location updates (3 km) running only so it can wait in the background, and never stores or sends your location |
 | Reading the Mac, syncing with the Mac | runs `pbpaste` and a small script on the Mac over `ssh`; on Windows it listens for the system's "clipboard changed" notice. Both sides tag what they write, so nothing bounces back and forth |
 | "Web" in the device menu | tries a few common web ports while the device is online, so the menu knows right away |
-| Installing Tailscale | downloads the MSI for your processor from `pkgs.tailscale.com`, has Windows verify its Authenticode signature and checks the signer is Tailscale Inc., then installs it with `msiexec` |
-| Local API for desktop widgets | listens only on `127.0.0.1:46214`, with a new random token each launch saved in `%LOCALAPPDATA%\TailOrbit\island.json`; lists devices, sends files, streams transfer progress |
+| Installing and updating Tailscale | downloads the MSI for your processor from `pkgs.tailscale.com`, has Windows verify its Authenticode signature and checks the signer is Tailscale Inc., then installs it with `msiexec` |
+| Local API for desktop widgets | listens only on `127.0.0.1:46214`, with a new random token each launch saved in `%LOCALAPPDATA%\TailOrbit\island.json`; lists devices, sends files, streams transfer progress. When a widget asks to take over notifications, TailOrbit's notifications show there instead of the corner of the screen |
 | Updates | reads the latest release from `api.github.com`; the installer is downloaded from GitHub into `%LOCALAPPDATA%\TailOrbit\update\` and only used if its size and SHA-256 match the release page and its version number matches; it then runs without a window |
 
 </details>

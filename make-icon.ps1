@@ -3,34 +3,39 @@
 #   TailOrbit-light.ico  浅底黑点：Windows 是浅色时用
 # 构图：圆角方块，中间本机，一圈轨道，右上一颗卫星（把轨道断开一截）。32px 以下每个尺寸单独定线宽和点的大小，
 # 落在整像素、半像素上，托盘那么小也清楚。256 存 PNG，其余存 32 位 BMP（系统托盘、旧接口都认）。
-# 用法：powershell -File make-icon.ps1 [-Preview 预览目录]——给了目录就顺便输出 256 的样子和放大 8 倍的小尺寸
-param([string]$Preview)
+# 用法：powershell -File make-icon.ps1 [-Preview 预览目录] [-Ios 图标目录]——给了 -Preview 就顺便输出 256 的样子和放大 8 倍的小尺寸；
+# 给了 -Ios 就只出 iPhone App 的两张 1024 图标（浅色、深色模式各一张）：满版方块、不透明，圆角由 iPhone 自己切
+param([string]$Preview, [string]$Ios)
 Add-Type -AssemblyName System.Drawing
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sizes = 16, 20, 24, 28, 32, 40, 48, 64, 256
 $looks = @(
-    @{ File = 'TailOrbit.ico';       Tile = '#1A1C1F'; Ring = '#8C929A'; Dot = '#E7E9EC'; Bar = '#202020' },
-    @{ File = 'TailOrbit-light.ico'; Tile = '#E6E8EB'; Ring = '#80868E'; Dot = '#1A1C1F'; Bar = '#F3F3F3' }
+    @{ File = 'TailOrbit.ico';       Ios = 'icon-dark.png'; Tile = '#1A1C1F'; Ring = '#8C929A'; Dot = '#E7E9EC'; Bar = '#202020' },
+    @{ File = 'TailOrbit-light.ico'; Ios = 'icon.png';      Tile = '#E6E8EB'; Ring = '#80868E'; Dot = '#1A1C1F'; Bar = '#F3F3F3' }
 )
 
 function Color([string]$hex) { [System.Drawing.ColorTranslator]::FromHtml($hex) }
 
-function Draw([int]$n, $look) {
-    $bmp = New-Object System.Drawing.Bitmap $n, $n, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+function Draw([int]$n, $look, [bool]$square = $false) {
+    $format = if ($square) { [System.Drawing.Imaging.PixelFormat]::Format24bppRgb } else { [System.Drawing.Imaging.PixelFormat]::Format32bppArgb }
+    $bmp = New-Object System.Drawing.Bitmap $n, $n, $format
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $tile = New-Object System.Drawing.SolidBrush (Color $look.Tile)
     $dot = New-Object System.Drawing.SolidBrush (Color $look.Dot)
 
-    $r = 0.227 * $n; $d = 2 * $r; $e = $n - 0.001
-    $shape = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $shape.AddArc(0, 0, $d, $d, 180, 90)
-    $shape.AddArc($e - $d, 0, $d, $d, 270, 90)
-    $shape.AddArc($e - $d, $e - $d, $d, $d, 0, 90)
-    $shape.AddArc(0, $e - $d, $d, $d, 90, 90)
-    $shape.CloseFigure()
-    $g.FillPath($tile, $shape)
+    if ($square) { $g.Clear((Color $look.Tile)) }
+    else {
+        $r = 0.227 * $n; $d = 2 * $r; $e = $n - 0.001
+        $shape = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $shape.AddArc(0, 0, $d, $d, 180, 90)
+        $shape.AddArc($e - $d, 0, $d, $d, 270, 90)
+        $shape.AddArc($e - $d, $e - $d, $d, $d, 0, 90)
+        $shape.AddArc(0, $e - $d, $d, $d, 90, 90)
+        $shape.CloseFigure()
+        $g.FillPath($tile, $shape)
+    }
 
     $c = $n / 2.0
     if ($n -le 32) {
@@ -73,6 +78,16 @@ function Frame([System.Drawing.Bitmap]$bmp) {
     $w.Write((New-Object byte[] ($maskRow * $n)))
     $w.Flush()
     return , $ms.ToArray()
+}
+
+if ($Ios) {
+    New-Item -ItemType Directory -Force $Ios | Out-Null
+    foreach ($look in $looks) {
+        $bmp = Draw 1024 $look $true
+        $bmp.Save((Join-Path $Ios $look.Ios), [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
+    }
+    return
 }
 
 if ($Preview) { New-Item -ItemType Directory -Force $Preview | Out-Null }

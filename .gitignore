@@ -3,3 +3,6 @@
 .ai-tmp/
 Thumbs.db
 dist/
+ios/Local.xcconfig
+ios/*.xcodeproj/
+ios/build/
