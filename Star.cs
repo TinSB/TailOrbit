@@ -14,11 +14,22 @@ using System.Windows.Shell;
 namespace TailOrbit
 {
     // 一台设备：圆盘（在线是实心圆，离线缩成空心圈）、发送进度环、送达时荡开的涟漪、名字，以及连回本机的线；
-    // 鼠标指着、菜单开着时外面套一圈；正往本机发文件时一圈圈往外荡；要掉线提醒的右上角挂个铃铛
+    // 鼠标指着、菜单开着时外面套一圈；正往本机发文件时一圈圈往外荡；要掉线提醒的右上角挂个铃铛；
+    // 有攒给它的待送文件时，一批一颗卫星绕着它转，对方上线开始发的时候落进圆盘里
     class Node
     {
         public static readonly IEasingFunction Nudge = new BackEase { Amplitude = 0.2, EasingMode = EasingMode.EaseOut };
         const double OffScale = 62 / 80.0;   // 离线圆盘 62，在线 80
+        const double Orbit = 47 * 0.8;       // 卫星的轨道半径：和离线时外面那圈（halo）一样大，紧贴圆盘、不碰名字
+
+        // 一颗卫星：小点放在轨道上（Out），整个绕圆心转（Turn）
+        class Moon
+        {
+            public readonly Canvas Pivot = new Canvas();
+            public readonly RotateTransform Turn = new RotateTransform();
+            public readonly TranslateTransform Out = new TranslateTransform();
+            public readonly ScaleTransform Size = new ScaleTransform(1, 1);
+        }
 
         public Device Dev;
         public string Ring = "";            // direct 内圈 / relay 中圈 / off 外圈
@@ -32,8 +43,10 @@ namespace TailOrbit
         public readonly Line Link = new Line { StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeDashCap = PenLineCap.Round, StrokeThickness = 1.5, Opacity = 0, IsHitTestVisible = false };
         readonly Theme th;
         readonly TranslateTransform at = new TranslateTransform();
-        readonly ScaleTransform lift = new ScaleTransform(1, 1);
         readonly Grid disc = new Grid { Width = 80, Height = 80, Background = Brushes.Transparent };
+        readonly Canvas sats = new Canvas { IsHitTestVisible = false };
+        readonly List<Moon> moons = new List<Moon>();   // 正在绕的（落下、取消的不算）
+        readonly Ellipse track;
         readonly ScaleTransform size = new ScaleTransform(1, 1), fx = new ScaleTransform(1, 1), pulse = new ScaleTransform(1, 1);
         readonly TranslateTransform shake = new TranslateTransform();
         readonly SolidColorBrush face, rim, ink, nameInk, linkInk;
@@ -116,6 +129,10 @@ namespace TailOrbit
             beacon = new Ellipse { Width = 80, Height = 80, Stroke = th.Fg, StrokeThickness = 1.5, Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = beaconScale };
             Canvas.SetLeft(beacon, -40);
             Canvas.SetTop(beacon, -40);
+            // 卫星的轨道：有待送时淡淡地在；拖着文件时离线设备都亮出这圈虚线，放上去就先排着
+            track = new Ellipse { Width = 2 * Orbit, Height = 2 * Orbit, Stroke = th.Fg, StrokeThickness = 1.5, StrokeDashArray = new DoubleCollection { 2, 14 / 3.0 }, StrokeDashCap = PenLineCap.Round, Opacity = 0, IsHitTestVisible = false };
+            Canvas.SetLeft(track, -Orbit);
+            Canvas.SetTop(track, -Orbit);
 
             label = Label(th, nameInk, labelShift, out name, out ip);
             name.Text = d.Name;
@@ -129,12 +146,11 @@ namespace TailOrbit
             Root.Children.Add(beacon);
             Root.Children.Add(halo);
             Root.Children.Add(arc);
+            Root.Children.Add(track);
+            Root.Children.Add(sats);   // 压在圆盘下面：上线时圆盘长大、填实，落下的卫星就被它吞进去
             Root.Children.Add(disc);
             Root.Children.Add(label);
-            var rg = new TransformGroup();
-            rg.Children.Add(lift);
-            rg.Children.Add(at);
-            Root.RenderTransform = rg;
+            Root.RenderTransform = at;
             LinkStyle();
         }
 
@@ -178,10 +194,10 @@ namespace TailOrbit
         public bool Busy { get { return Job != null; } }
         public double HitRadius { get { return Dev.Online ? 66 : 50; } }
 
-        // 占地：圆盘加名字（名字在朝外的一侧），排位置时彼此不压
+        // 占地：圆盘（有卫星时算到轨道外沿）加名字（名字在朝外的一侧），排位置时彼此不压
         public Rect Bounds(Point p, bool up)
         {
-            double r = Dev.Online ? 56 : 31, l = Dev.Online ? 80 : 62;
+            double r = Dev.Online ? 56 : moons.Count > 0 ? Orbit + 5 : 31, l = Dev.Online ? 80 : 62;
             double half = Math.Max(r, LabelWidth / 2 + 4);
             return up ? new Rect(p.X - half, p.Y - l, 2 * half, l + r) : new Rect(p.X - half, p.Y - r, 2 * half, r + l);
         }
@@ -263,7 +279,7 @@ namespace TailOrbit
             else
             {
                 int d = intro ? lead + 980 + order * 120 : 0;
-                Ui.AnimFrom(Root, UIElement.OpacityProperty, 0, lifted ? 0.3 : 1, 700, d);
+                Ui.AnimFrom(Root, UIElement.OpacityProperty, 0, 1, 700, d);
                 Ui.ScaleFrom(pulse, 0.6, 1, 700, d);
             }
         }
@@ -277,17 +293,15 @@ namespace TailOrbit
             Ui.After(320, done);
         }
 
-        // 拖着文件进了窗口：在线的跟着呼吸等你放，离线的退到一边
+        // 拖着文件进了窗口：在线的跟着呼吸等你放；离线的亮出卫星轨道，放上去先排着，上线了自动发
         public void SetLift(bool on)
         {
             lifted = on;
             if (!on) aimed = false;
-            bool fade = on && !Dev.Online;
-            Ui.AnimTo(Root, UIElement.OpacityProperty, fade ? 0.3 : 1, 300);
-            Ui.ScaleTo(lift, fade ? 0.86 : 1, 350, Ui.Spring);
             Breathe();
             LinkStyle();
             HaloStyle();
+            TrackStyle();
         }
 
         public void SetAim(bool on)
@@ -296,12 +310,19 @@ namespace TailOrbit
             aimed = on;
             Breathe();
             LinkStyle();
+            TrackStyle();
+        }
+
+        void TrackStyle()
+        {
+            double op = Dev.Online || Gone ? 0 : lifted ? (aimed ? 0.85 : 0.3) : moons.Count > 0 ? 0.2 : 0;
+            Ui.AnimTo(track, UIElement.OpacityProperty, op, 250);
         }
 
         void Breathe()
         {
             int k = ++breath;
-            if (aimed) { Ui.ScaleTo(fx, 1.2, 400, Ui.Spring); return; }
+            if (aimed) { Ui.ScaleTo(fx, Dev.Online ? 1.2 : 1.08, 400, Ui.Spring); return; }   // 离线的放大得少些，不碰到轨道
             bool wanted = lifted && Dev.Online && !Busy;
             bool rest = Math.Abs(fx.ScaleX - 1) < 0.01;
             Ui.ScaleTo(fx, 1, rest ? 1 : 250);
@@ -416,8 +437,74 @@ namespace TailOrbit
             Swap(act, show == "act");
         }
 
+        // 待送有几批就绕几颗（最多三颗）。animate：新排进来的从圆心飞到轨道上，取消的就地缩没
+        public void Queue(int count, bool animate)
+        {
+            count = Math.Min(count, 3);
+            if (count == moons.Count) return;
+            while (moons.Count > count) Fade(moons[moons.Count - 1], animate);
+            while (moons.Count < count) Launch(animate);
+            TrackStyle();
+        }
+
+        void Launch(bool animate)
+        {
+            var m = new Moon();
+            var tg = new TransformGroup();
+            tg.Children.Add(m.Size);
+            tg.Children.Add(m.Out);
+            // 描一圈底色：压在轨道上时把轨道断开一小截，和图标里那颗卫星一样
+            var dot = new Ellipse { Width = 11, Height = 11, Fill = th.Fg, Stroke = th.Bg, StrokeThickness = 2, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = tg };
+            Canvas.SetLeft(dot, -5.5);
+            Canvas.SetTop(dot, -5.5);
+            m.Pivot.RenderTransform = m.Turn;
+            m.Pivot.Children.Add(dot);
+            sats.Children.Add(m.Pivot);
+            // 第一颗从正上方起转；后面的比前一颗错开一个黄金角，几颗不扎堆
+            double from = moons.Count == 0 ? -90 : (double)moons[moons.Count - 1].Turn.GetValue(RotateTransform.AngleProperty) + 137.5;
+            moons.Add(m);
+            var spin = new DoubleAnimation(from, from + 360, TimeSpan.FromMilliseconds(6000)) { RepeatBehavior = RepeatBehavior.Forever };
+            Timeline.SetDesiredFrameRate(spin, 30);   // 转得慢，每秒 30 帧就够顺，少画一半
+            Ui.Loop(m.Pivot, m.Turn, RotateTransform.AngleProperty, spin);
+            if (!animate) { m.Out.X = Orbit; return; }
+            Ui.AnimFrom(m.Out, TranslateTransform.XProperty, 0, Orbit, 560, 0, Ui.Spring);
+            Ui.ScaleFrom(m.Size, 0.3, 1, 560, 0, Ui.Spring);
+        }
+
+        // 攒着的开始发了：卫星一颗接一颗落进圆盘
+        void Land()
+        {
+            for (int i = 0; i < moons.Count; i++)
+            {
+                var m = moons[i];
+                Ui.After(1 + i * 120, () =>
+                {
+                    Ui.AnimTo(m.Out, TranslateTransform.XProperty, 0, 420, MainEase.Sink);
+                    Ui.ScaleTo(m.Size, 0.3, 420, MainEase.Sink);
+                    Ui.After(440, () => Remove(m));
+                });
+            }
+            moons.Clear();
+            TrackStyle();
+        }
+
+        void Fade(Moon m, bool animate)
+        {
+            moons.Remove(m);
+            if (!animate) { Remove(m); return; }
+            Ui.ScaleTo(m.Size, 0, 220);
+            Ui.After(240, () => Remove(m));
+        }
+
+        void Remove(Moon m)
+        {
+            Ui.Unloop(m.Turn, RotateTransform.AngleProperty);
+            sats.Children.Remove(m.Pivot);
+        }
+
         public void Start(SendJob j)
         {
+            if (j.Queued) Land();
             Job = j;
             stamp++;
             state = "busy";

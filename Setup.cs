@@ -1,7 +1,7 @@
 // 安装和卸载。发布出去的 TailOrbit-Setup-<版本>.exe 就是本程序换了个名字：双击它（或带 --install）把自己装到
 // %LOCALAPPDATA%\Programs\TailOrbit——不用管理员权限，放进开始菜单，登记到“设置 → 应用”，从那里卸载（--uninstall）。
 // 换新版就再运行一次安装：先叫开着的那个退出，再换掉程序，设置和记录都留着。
-// --quiet 不弹窗口（给脚本用）；卸载时再加 --purge，连设置、传输记录一起删
+// --quiet 不弹窗口（给脚本用），装好开在托盘里，再加 --open 打开主界面（程序自己更新时用）；卸载时再加 --purge，连设置、传输记录一起删
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -72,10 +72,10 @@ namespace TailOrbit
             if (args.Contains("--quiet"))
             {
                 string why = mode == "install" ? Install(AutostartWanted) : Uninstall(args.Contains("--purge"));
-                if (why != null) return 1;
-                if (mode == "install") Process.Start(Exe, "--tray");
-                else RemoveProgram();
-                return 0;
+                // 装好打开新版；没装成也把原来那份开回来（开着的已经被叫退出了）
+                if (mode == "install" && File.Exists(Exe)) Process.Start(Exe, args.Contains("--open") ? "" : "--tray");
+                else if (why == null) RemoveProgram();
+                return why == null ? 0 : 1;
             }
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
             L.Use(Settings.Language);
@@ -93,6 +93,7 @@ namespace TailOrbit
                 Stop();
                 Directory.CreateDirectory(Dir);
                 if (!Same(Self, Exe)) Copy(Self, Exe);
+                WriteIcons();
                 try { Shortcut(); }
                 catch (COMException) { }   // 有的公司电脑禁了 WScript.Shell：没有开始菜单那一项，程序照样能用
                 Register();
@@ -137,12 +138,14 @@ namespace TailOrbit
         {
             if (Same(Self, Exe))
             {
-                Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 3 > nul & del /f /q \"" + Exe + "\" & rd \"" + Dir + "\"") { CreateNoWindow = true, UseShellExecute = false });
+                Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 3 > nul & del /f /q \"" + Exe + "\" \"" + IconFile(false) + "\" \"" + IconFile(true) + "\" & rd \"" + Dir + "\"") { CreateNoWindow = true, UseShellExecute = false });
                 return;
             }
             try
             {
                 File.Delete(Exe);
+                File.Delete(IconFile(false));
+                File.Delete(IconFile(true));
                 Directory.Delete(Dir);
             }
             catch (IOException) { }   // 文件夹里还有别的东西：留着
@@ -179,7 +182,45 @@ namespace TailOrbit
             s.TargetPath = Exe;
             s.WorkingDirectory = Dir;
             s.Description = "TailOrbit";
+            s.IconLocation = IconFile(Ui.SystemLight) + ",0";
             s.Save();
+        }
+
+        // 开始菜单那一项、“设置 → 应用”里的图标要跟着 Windows 的深浅色，可程序文件本身只能带一份图标（深色那份）：
+        // 两份都放到程序旁边，快捷方式和登记的图标指向对得上的那份。两份文件名不同，换过去时系统才会重新读，不用缓存里的旧图
+        static string IconFile(bool light)
+        {
+            return Path.Combine(Dir, light ? "TailOrbit-light.ico" : "TailOrbit-dark.ico");
+        }
+
+        static void WriteIcons()
+        {
+            foreach (bool light in new[] { false, true })
+                using (var s = Ui.IconStream(light))
+                using (var f = File.Create(IconFile(light))) s.CopyTo(f);
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern void SHChangeNotify(int eventId, int flags, string item1, IntPtr item2);
+
+        // 装好的这一份开着时：Windows 的深浅色和开始菜单那一项的图标对不上就换过去（启动时、Windows 换深浅色时各看一次）
+        public static void Restyle()
+        {
+            if (!Same(Self, Exe) || !File.Exists(Link)) return;
+            try
+            {
+                string icon = IconFile(Ui.SystemLight);
+                if (!File.Exists(icon)) WriteIcons();
+                dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
+                var s = shell.CreateShortcut(Link);
+                if (string.Equals((string)s.IconLocation, icon + ",0", StringComparison.OrdinalIgnoreCase)) return;
+                s.IconLocation = icon + ",0";
+                s.Save();
+                using (var k = Registry.CurrentUser.OpenSubKey(UninstallKey, true)) if (k != null) k.SetValue("DisplayIcon", icon);
+                SHChangeNotify(0x2000, 0x0005, Link, IntPtr.Zero);   // SHCNE_UPDATEITEM、SHCNF_PATHW：叫开始菜单重读这一项
+            }
+            catch (COMException e) { Log.Write(e); }                 // 公司电脑禁了 WScript.Shell
+            catch (IOException e) { Log.Write(e); }
+            catch (UnauthorizedAccessException e) { Log.Write(e); }
         }
 
         // 登记到“设置 → 应用”：那里显示名字、版本、大小，点“卸载”就运行 --uninstall
@@ -190,7 +231,7 @@ namespace TailOrbit
                 k.SetValue("DisplayName", "TailOrbit");
                 k.SetValue("DisplayVersion", Version);
                 k.SetValue("Publisher", "TinSB");
-                k.SetValue("DisplayIcon", Exe + ",0");
+                k.SetValue("DisplayIcon", IconFile(Ui.SystemLight));
                 k.SetValue("InstallLocation", Dir);
                 k.SetValue("UninstallString", "\"" + Exe + "\" --uninstall");
                 k.SetValue("QuietUninstallString", "\"" + Exe + "\" --uninstall --quiet");
@@ -241,7 +282,7 @@ namespace TailOrbit
             close.Margin = new Thickness(0, -10, -10, 0);
 
             var head = new StackPanel { Background = Brushes.Transparent, Margin = new Thickness(0, 0, 0, 22) };
-            head.Children.Add(new Image { Source = Ui.IconFrame(128), Width = 64, Height = 64 });
+            head.Children.Add(new Image { Source = Ui.IconFrame(128, !th.Dark), Width = 64, Height = 64 });
             var title = new TextBlock { Text = install ? "TailOrbit" : L.T("卸载 TailOrbit"), FontFamily = Ui.DisplayFont, FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 14, 0, 4) };
             head.Children.Add(title);
             // 换新版时写“旧版 → 新版”

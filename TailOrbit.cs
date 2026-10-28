@@ -1,7 +1,9 @@
 // TailOrbit：Tailscale 的 Windows 小工具——把文件拖到设备上，就用 Taildrop 发过去
 // 主界面（MainWindow.cs、Star.cs）：点托盘图标或开始菜单打开。“星网”——本机在中间，设备按直连 / 中继 / 离线排在三圈上；
 // 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、网页、发文件、复制域名、掉线提醒）；
-// 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。开机自启、界面语言在本机页，退出在托盘菜单。
+// 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。退出在托盘菜单。
+// 设置页（SettingsPage.cs）：深浅色、开机自启、界面语言、两个剪贴板开关；检查更新、自动下载更新（Updates.cs，从 GitHub 发布页下载安装程序）。
+// 待送（Outbox.cs）：离线的设备也能拖上去，文件先排着、在它旁边绕着转，对方一上线自动发过去。
 // 快捷面板（QuickPanel.cs）：按 Ctrl+Alt+A 弹出，把资源管理器里选中的文件（文件夹先打包成 zip）发给按下数字的那台设备。
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
@@ -433,6 +435,7 @@ namespace TailOrbit
         public List<string> Paths;
         public Action<double, string> Progress;
         public long TotalBytes;
+        public bool Queued;   // 待送的（对方刚上线）：星网上先让绕着它转的卫星落进去
         // 给环礁看的：preparing 打包中 / sending / retrying 对方没回应、还在重试 / done / failed / canceled；Fraction 不知道进度时是 -1
         public string State = "preparing", Error = "";
         public double Fraction = Unknown;
@@ -740,7 +743,7 @@ namespace TailOrbit
         }
     }
 
-    // 星网配色：灰阶分出层次，只有“送到了”和“没送到”带颜色；跟着系统的深浅色走
+    // 星网配色：灰阶分出层次，只有“送到了”和“没送到”带颜色；默认跟着系统的深浅色走，设置页里可以固定成浅色或深色
     class Theme
     {
         public readonly bool Dark;
@@ -749,8 +752,7 @@ namespace TailOrbit
 
         public Theme()
         {
-            object v = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1);
-            Dark = v is int && (int)v == 0;
+            Dark = WantDark;
             BgColor = C(Dark ? 0xFF1A1C1Fu : 0xFFE6E8EBu);
             FgColor = C(Dark ? 0xFFE7E9ECu : 0xFF1A1C1Fu);     // 在线设备、正文
             InkColor = C(Dark ? 0xFF1A1C1Fu : 0xFFF1F2F4u);    // 实心圆上的图标和数字
@@ -774,6 +776,17 @@ namespace TailOrbit
             Pop = B(C(Dark ? 0xFF25282Cu : 0xFFF4F5F6u));
             OkSoft = B(Fade(OkColor, 0.18));
             BadSoft = B(Fade(BadColor, 0.18));
+        }
+
+        // 设置里选的深浅色；跟随系统时看 Windows 给应用用的那一项（和任务栏的深浅色是两个开关）
+        public static bool WantDark
+        {
+            get
+            {
+                if (Settings.Theme != "auto") return Settings.Theme == "dark";
+                object v = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1);
+                return v is int && (int)v == 0;
+            }
         }
 
         public static Color Fade(Color c, double alpha)
@@ -1017,29 +1030,40 @@ namespace TailOrbit
             return t.Year == today.Year ? t.ToString(f.MonthDayPattern + " HH:mm", L.Culture) : t.ToString(f.ShortDatePattern, L.Culture);
         }
 
-        // 托盘、窗口、开始菜单共用的图标：编译时嵌进程序的 TailOrbit.ico（石墨底，本机和一颗卫星）
-        static Stream IconStream()
+        // 程序图标有深浅两份（make-icon.ps1 画的，编译时嵌进程序）：深底白点的 TailOrbit.ico、浅底黑点的 TailOrbit-light.ico，
+        // 都是本机和一颗卫星。任务栏、托盘、开始菜单跟着 Windows 的深浅色，程序里面跟着界面的深浅色
+        public static Stream IconStream(bool light)
         {
-            return typeof(Ui).Assembly.GetManifestResourceStream("TailOrbit.ico");
+            return typeof(Ui).Assembly.GetManifestResourceStream(light ? "TailOrbit-light.ico" : "TailOrbit.ico");
+        }
+
+        // Windows 自己（任务栏、开始菜单）是不是浅色：和程序界面的深浅色是两个开关。老版本 Windows 没有这一项，任务栏总是深色
+        public static bool SystemLight
+        {
+            get
+            {
+                object v = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0);
+                return v is int && (int)v == 1;
+            }
         }
 
         public static Drawing.Icon TrayIcon()
         {
-            using (var s = IconStream()) return new Drawing.Icon(s, WinForms.SystemInformation.SmallIconSize);
+            using (var s = IconStream(SystemLight)) return new Drawing.Icon(s, WinForms.SystemInformation.SmallIconSize);
         }
 
         public static ImageSource WindowIcon()
         {
             var ms = new MemoryStream();   // 整个 ico 留在内存里，任务栏和 Alt+Tab 各挑合适的尺寸
-            using (var s = IconStream()) s.CopyTo(ms);
+            using (var s = IconStream(SystemLight)) s.CopyTo(ms);
             ms.Position = 0;
             return BitmapFrame.Create(ms);
         }
 
-        // 托盘菜单里的小图标：挑不小于显示像素的最小那一版，不拿 256 的大图硬缩
-        public static BitmapSource IconFrame(double px)
+        // 程序里画的小图标（左上角、托盘菜单）：挑不小于显示像素的最小那一版，不拿 256 的大图硬缩
+        public static BitmapSource IconFrame(double px, bool light)
         {
-            using (var s = IconStream())
+            using (var s = IconStream(light))
             {
                 var frames = new IconBitmapDecoder(s, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames.OrderBy(f => f.PixelWidth).ToList();
                 return frames.FirstOrDefault(f => f.PixelWidth >= px - 0.5) ?? frames.Last();
@@ -1055,20 +1079,20 @@ namespace TailOrbit
         [DllImport("user32.dll")] static extern bool AddClipboardFormatListener(IntPtr hwnd);
         [DllImport("user32.dll")] static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
-        public readonly Theme Theme = new Theme();
-        public readonly Drawing.Icon Icon = Ui.TrayIcon();
+        public Theme Theme = new Theme();   // 换深浅色时整个换成新的一份，窗口跟着重建
         QuickPanel panel;
         MainWindow main;
         HwndSource sink;
         WinForms.NotifyIcon tray;
         TrayMenu menu, spare;
         string spareFor;
-        bool quitting;
+        bool quitting, trayLight;
         EventWaitHandle showSignal, quitSignal;
         bool sweeping;
         readonly List<SendJob> loose = new List<SendJob>();   // 环礁上发起、没在星网上画的发送：退出时取消
         public bool HotkeyOk { get; private set; }   // Ctrl+Alt+A 注册上了：托盘菜单里给它画键帽
-        public event Action Toggled;                 // 托盘菜单拨了剪贴板开关：本机页那两行跟着变
+        public event Action Toggled;                 // 托盘菜单拨了剪贴板开关：设置页那两项跟着变
+        Action balloonClick;                         // 点托盘通知时做什么（比如打开设置页）；每条通知各管各的
 
         public void Start(bool showMain)
         {
@@ -1081,9 +1105,14 @@ namespace TailOrbit
             sink = new HwndSource(p);
             sink.AddHook(OnMessage);
 
-            tray = new WinForms.NotifyIcon { Icon = Icon, Text = "TailOrbit" };
+            tray = new WinForms.NotifyIcon { Icon = Ui.TrayIcon(), Text = "TailOrbit" };
+            trayLight = Ui.SystemLight;
+            // Windows 换了深浅色：托盘、任务栏、开始菜单上的图标跟着换；界面选了跟随系统的也跟着换
+            SystemEvents.UserPreferenceChanged += (s, e) => { if (e.Category == UserPreferenceCategory.General) panel.Dispatcher.BeginInvoke(new Action(Restyle)); };
+            Task.Run(() => Setup.Restyle());
             tray.MouseClick += (s, e) => { if (e.Button == WinForms.MouseButtons.Left) OpenFromTray(); };
             tray.MouseUp += (s, e) => { if (e.Button == WinForms.MouseButtons.Right) ShowMenu(); };
+            tray.BalloonTipClicked += delegate { var a = balloonClick; balloonClick = null; if (a != null) a(); };
             tray.Visible = true;
 
             HotkeyOk = RegisterHotKey(sink.Handle, 1, 0x0002 | 0x0001 | 0x4000, 0x41);   // Ctrl+Alt+A，按住不连发
@@ -1110,6 +1139,8 @@ namespace TailOrbit
             Sweep();
             Inbox.Start();
             Alerts.Start(this);
+            Outbox.Start(this);
+            Updates.Start(this);
             if (showMain) ShowMain();
             // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好、备好托盘菜单、把主界面建好并读一遍设备，
             // 第一次按 Ctrl+Alt+A、第一次右键托盘、第一次点开主界面都少等一截
@@ -1121,6 +1152,26 @@ namespace TailOrbit
                 main = new MainWindow(this);
                 main.Preload();
             }));
+        }
+
+        // 改别的系统设置也会来这一下：深浅色真变了才换
+        // 界面选了跟随系统时也跟着换（有文件正在发就等发完）
+        void Restyle()
+        {
+            if (quitting) return;
+            bool light = Ui.SystemLight;
+            if (light != trayLight)
+            {
+                trayLight = light;
+                var old = tray.Icon;
+                tray.Icon = Ui.TrayIcon();
+                old.Dispose();
+                if (main != null) main.Icon = Ui.WindowIcon();
+                Task.Run(() => Setup.Restyle());
+            }
+            if (Theme.WantDark == Theme.Dark) return;
+            if (Busy) Ui.After(5000, Restyle);
+            else Rebuild(main != null ? main.PageKey : "home");
         }
 
         void Sweep()
@@ -1165,7 +1216,7 @@ namespace TailOrbit
         // 菜单建的时候读的那些：变了备好的那份就作废
         string MenuState()
         {
-            return L.Code + "|" + HotkeyOk + "|" + Settings.ClipOn + "|" + Settings.SyncMac;
+            return L.Code + "|" + Theme.Dark + "|" + HotkeyOk + "|" + Settings.ClipOn + "|" + Settings.SyncMac;
         }
 
         // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
@@ -1187,18 +1238,36 @@ namespace TailOrbit
             if (h != null) h();
         }
 
-        // 换界面语言：主界面原地换成新语言的一份（停在本机页、位置大小不变），快捷面板也换；托盘菜单每次现做，不用管
+        // 换界面语言：主界面原地换成新语言的一份（停在设置页、位置大小不变），快捷面板也换；托盘菜单每次现做，不用管
         public void SetLanguage(string setting)
         {
-            if ((main != null && main.Busy) || panel.Busy) { Notify(L.T("暂不切换语言"), L.T("有文件正在发送，请在发送完成后再切换。")); return; }
+            if (Busy) { Notify(L.T("暂不切换语言"), L.T("有文件正在发送，请在发送完成后再切换。")); return; }
             Settings.Language = setting;
             L.Use(setting);
-            panel.Close();   // 上面已经挡掉了正在发送的情况：快捷面板总能换成新语言的一份
+            Rebuild("settings");
+        }
+
+        // mode："auto" 跟随系统、"light"、"dark"
+        public void SetTheme(string mode)
+        {
+            if (Busy) { Notify(L.T("暂不切换外观"), L.T("有文件正在发送，请在发送完成后再切换外观。")); return; }
+            Settings.Theme = mode;
+            if (Theme.WantDark != Theme.Dark) Rebuild("settings");
+        }
+
+        bool Busy { get { return (main != null && main.Busy) || panel.Busy; } }
+
+        // 换了语言或深浅色：快捷面板换成新的一份，主界面原地换成新的一份（停在 page 那页、位置大小不变）；托盘菜单每次现做，不用管。
+        // 调用前已经挡掉了正在发送的情况
+        void Rebuild(string page)
+        {
+            Theme = new Theme();
+            panel.Close();
             panel = new QuickPanel(this);
             if (main == null) return;
             var old = main;
             main = new MainWindow(this);
-            main.Replace(old, "device");
+            main.Replace(old, page);
             old.Quitting = true;
             old.Close();
         }
@@ -1223,8 +1292,8 @@ namespace TailOrbit
             Island.Clip(ip, inward);
         }
 
-        // 环礁上拖来的文件：主界面建好、那台设备在星网上又没在发，就照常画光点；不然在后台发。都照常记进传输记录
-        public void SendFromIsland(SendJob j)
+        // 环礁上拖来的文件、等到对方上线的待送：主界面建好、那台设备在星网上又没在发，就照常画光点；不然在后台发。都照常记进传输记录
+        public void Deliver(SendJob j)
         {
             if (main != null && main.Send(j)) return;
             j.Progress = (f, text) => { };
@@ -1266,15 +1335,17 @@ namespace TailOrbit
         }
 
         // island：这件事环礁上也看得到（收发文件、剪贴板经过），岛连着时右下角就不再弹
-        public void Notify(string title, string text, bool island = false)
+        public void Notify(string title, string text, bool island = false, Action click = null)
         {
             if (island && Island.Connected) return;
+            balloonClick = click;
             tray.ShowBalloonTip(4000, title, text, WinForms.ToolTipIcon.None);
         }
 
         public void Quit()
         {
             quitting = true;
+            Outbox.Stop();
             panel.Abort();
             if (main != null) main.Abort();
             foreach (var j in loose) j.Cancel();

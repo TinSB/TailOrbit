@@ -306,13 +306,13 @@ namespace TailOrbit
         }
     }
 
-    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、剪贴板互通、和 Mac 共用剪贴板
+    // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、深浅色、剪贴板互通、和 Mac 共用剪贴板、自动下载更新
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
         static readonly HashSet<string> watch = new HashSet<string>();
-        static string language = "auto", clipKey = "";
-        static bool clipOn, syncMac;
+        static string language = "auto", theme = "auto", clipKey = "";
+        static bool clipOn, syncMac, autoUpdate;
 
         static Settings()
         {
@@ -323,6 +323,8 @@ namespace TailOrbit
                 var list = Tailscale.Get(o, "watch") as object[];
                 if (list != null) foreach (var s in list.OfType<string>()) watch.Add(s);
                 language = (Tailscale.Get(o, "lang") as string) ?? "auto";
+                theme = (Tailscale.Get(o, "theme") as string) ?? "auto";
+                autoUpdate = true.Equals(Tailscale.Get(o, "autoUpdate"));
                 clipOn = true.Equals(Tailscale.Get(o, "clip"));
                 clipKey = (Tailscale.Get(o, "clipKey") as string) ?? "";
                 syncMac = true.Equals(Tailscale.Get(o, "syncMac"));
@@ -353,6 +355,20 @@ namespace TailOrbit
         {
             get { return language; }
             set { language = value; Save(); }
+        }
+
+        // 深浅色："auto" 跟随系统，或者 "light"、"dark"
+        public static string Theme
+        {
+            get { return theme; }
+            set { theme = value; Save(); }
+        }
+
+        // 有新版本时自动下载（默认关：不开就不会自己去连 GitHub）
+        public static bool AutoUpdate
+        {
+            get { return autoUpdate; }
+            set { autoUpdate = value; Save(); }
         }
 
         public static bool ClipOn
@@ -389,7 +405,7 @@ namespace TailOrbit
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FilePath));
                 string temp = FilePath + ".tmp";
-                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac } };
+                var o = new Dictionary<string, object> { { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac } };
                 File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));
                 if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
                 else File.Move(temp, FilePath);

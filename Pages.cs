@@ -1,4 +1,4 @@
-// 主界面除星网以外的几页（分享、网络、云盘、本机）共用的底板和小零件：开关、分段选择、按钮、复制行
+// 主界面除星网以外的几页（分享、网络、云盘、本机、设置）共用的底板和小零件：开关、分段选择、按钮、复制行
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -118,6 +118,7 @@ namespace TailOrbit
         public static Border InfoRow(Theme th, string key, FrameworkElement value)
         {
             var k = Text(key, 14, th.Mute);
+            k.Margin = new Thickness(0, 0, 12, 0);   // 名目长时别贴着右边的值
             value.HorizontalAlignment = HorizontalAlignment.Right;
             return new Border { Height = 42, BorderBrush = th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = Ui.Columns(0, k, value) };
         }

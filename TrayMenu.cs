@@ -107,7 +107,7 @@ namespace TailOrbit
         {
             IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
             SetWindowLong(hwnd, -20, GetWindowLong(hwnd, -20) | 0x08000000 | 0x80);   // GWL_EXSTYLE：WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
-            appIcon.Source = Ui.IconFrame(18 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+            appIcon.Source = Ui.IconFrame(18 * VisualTreeHelper.GetDpi(this).DpiScaleX, !th.Dark);
             card.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Width = card.DesiredSize.Width;
             Height = card.DesiredSize.Height;

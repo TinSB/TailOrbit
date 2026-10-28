@@ -184,7 +184,7 @@ namespace TailOrbit
             if (!d.Online) { Reply(s, 409, Error(L.T("{0} 当前离线", d.Name))); return; }
             var j = new SendJob { Target = d, Paths = paths };
             lock (gate) jobs[j.Id] = j;
-            Application.Current.Dispatcher.Invoke(() => host.SendFromIsland(j));
+            Application.Current.Dispatcher.Invoke(() => host.Deliver(j));
             Reply(s, 202, new Dictionary<string, object> { { "job", j.Id.ToString() } });
         }
 

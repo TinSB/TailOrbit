@@ -1,4 +1,4 @@
-// 快捷面板：按 Ctrl+Alt+A 弹出，列出自己的设备；按数字键或点一下，就把资源管理器里选中的文件发过去
+// 快捷面板：按 Ctrl+Alt+A 弹出，列出自己的设备；按数字键或点一下，就把资源管理器里选中的文件发过去（离线的先排着，上线后自动发）
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -206,7 +206,7 @@ namespace TailOrbit
                 var r = BuildRow(devices[i], i);
                 rows.Add(r);
                 list.Children.Add(r.Root);
-                double o = devices[i].Online ? 1 : 0.45;
+                double o = devices[i].Online ? 1 : 0.6;
                 if (animate)
                 {
                     Ui.AnimFrom(r.Root, OpacityProperty, 0, o, 240, 60 + 45 * i);
@@ -263,7 +263,7 @@ namespace TailOrbit
         {
             if (i < 0 || i >= rows.Count) return;
             var r = rows[i];
-            if (job != null || !r.Device.Online)
+            if (job != null)
             {
                 if (i != jobIndex) Ui.Shake(r.Shift);
                 return;
@@ -273,7 +273,26 @@ namespace TailOrbit
                 if (!PickFiles()) return;
                 UpdateHeader();
             }
-            StartSend(i);
+            if (r.Device.Online) StartSend(i);
+            else Queue(r);
+        }
+
+        // 离线的设备：先排着（星网上它旁边多一颗卫星），对方上线了自动发
+        void Queue(Row r)
+        {
+            Outbox.Add(r.Device, files);
+            files = new List<string>();
+            r.Fill.Background = th.Fill;
+            Ui.AnimTo(r.Fill, OpacityProperty, 1, 150);
+            Ui.AnimTo(r.FillScale, ScaleTransform.ScaleXProperty, 1, 260);
+            r.Status.Text = L.T("上线后自动发送");
+            r.Status.Foreground = th.Fg;
+            r.Action.Show("check");
+            r.Action.Stroke = th.Fg;
+            r.ActionBtn.ToolTip = null;
+            Ui.Pop(r.Pop);
+            int v = version;
+            Ui.After(1100, () => { if (v == version) HidePanel(); });
         }
 
         bool PickFiles()
@@ -307,7 +326,7 @@ namespace TailOrbit
             job = null;
             jobIndex = -1;
             History.Record(j, result);
-            for (int k = 0; k < rows.Count; k++) Ui.AnimTo(rows[k].Root, OpacityProperty, rows[k].Device.Online ? 1 : 0.45, 180);
+            for (int k = 0; k < rows.Count; k++) Ui.AnimTo(rows[k].Root, OpacityProperty, rows[k].Device.Online ? 1 : 0.6, 180);
             if (result == null)
             {
                 files = new List<string>();

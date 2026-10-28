@@ -18,6 +18,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Shell;
 using System.Windows.Threading;
@@ -49,7 +50,7 @@ namespace TailOrbit
         readonly FlowLayer flow, flowIn;
 
         // 分页：星网是首页，其余几页第一次切过去时才建
-        static readonly string[] PageKeys = { "home", "share", "net", "drive", "device" };
+        static readonly string[] PageKeys = { "home", "share", "net", "drive", "device", "settings" };
         readonly Grid home = new Grid();
         readonly Dictionary<string, FrameworkElement> pages = new Dictionary<string, FrameworkElement>();
         Segmented tabs;
@@ -162,7 +163,8 @@ namespace TailOrbit
             field.SizeChanged += delegate { Layout(false); };
             History.Changed += OnHistory;
             Inbox.Changed += OnInbox;
-            Closed += delegate { History.Changed -= OnHistory; Inbox.Changed -= OnInbox; };   // 换语言时旧窗口关掉，别再收事件
+            Outbox.Changed += OnOutbox;
+            Closed += delegate { History.Changed -= OnHistory; Inbox.Changed -= OnInbox; Outbox.Changed -= OnOutbox; };   // 换语言时旧窗口关掉，别再收事件
             refresh.Tick += delegate { if (WindowState != WindowState.Minimized) Reload(); };
             IsVisibleChanged += delegate
             {
@@ -195,7 +197,7 @@ namespace TailOrbit
             PreviewKeyDown += (s, e) =>
             {
                 if (e.Key == Key.Escape && fan != null) { CloseFan(); e.Handled = true; }
-                // Ctrl+1～5 换页
+                // Ctrl+1～6 换页
                 if (Keyboard.Modifiers == ModifierKeys.Control && e.Key >= Key.D1 && e.Key < Key.D1 + PageKeys.Length) { Switch(PageKeys[e.Key - Key.D1]); e.Handled = true; }
             };
             SourceInitialized += delegate
@@ -238,7 +240,7 @@ namespace TailOrbit
             Reload();
         }
 
-        // 换语言时顶替旧窗口：同样的位置、大小，直接停在指定那页，不放开屏动画
+        // 换语言、换深浅色时顶替旧窗口：同样的位置、大小，直接停在指定那页，不放开屏动画
         public void Replace(MainWindow old, string page)
         {
             WindowStartupLocation = WindowStartupLocation.Manual;
@@ -254,10 +256,27 @@ namespace TailOrbit
             if (!shown) return;
             Show();
             Activate();
+            Cover(old);
             var p = CurrentPage;
             if (p != null) p.Shown();
             Reload();
             refresh.Start();
+        }
+
+        // 换深浅色、换语言时，旧窗口的样子先盖在上面再淡出去，不是一下子跳过去
+        void Cover(MainWindow old)
+        {
+            var from = (FrameworkElement)old.Content;
+            if (from.ActualWidth < 1 || from.ActualHeight < 1) return;
+            var dpi = VisualTreeHelper.GetDpi(from);
+            var shot = new RenderTargetBitmap((int)Math.Ceiling(from.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(from.ActualHeight * dpi.DpiScaleY), dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+            var dv = new DrawingVisual();   // 经 VisualBrush 画一遍：直接 Render 会把它在窗口里的偏移（最大化时的边距）也算进去
+            using (var dc = dv.RenderOpen()) dc.DrawRectangle(new VisualBrush(from), null, new Rect(0, 0, from.ActualWidth, from.ActualHeight));
+            shot.Render(dv);
+            var cover = new Image { Source = shot, Width = from.ActualWidth, Height = from.ActualHeight, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            root.Children.Add(cover);
+            Ui.AnimFrom(cover, OpacityProperty, 1, 0, 380, 60);
+            Ui.After(480, () => root.Children.Remove(cover));
         }
 
         public bool Busy
@@ -549,6 +568,7 @@ namespace TailOrbit
                 else added.Add(n = AddNode(d));
                 n.Ring = RingOf(d);
                 n.SetWatched(Settings.Watched(d), false);
+                n.Queue(Outbox.For(d).Count, false);
             }
             foreach (var n in nodes.Values.Where(x => !seen.Contains(x.Dev.Ip) && x.Job == null).ToList()) RemoveNode(n);
             // 在线设备的网页端口先在后台敲好，点设备时菜单马上就能弹
@@ -559,6 +579,14 @@ namespace TailOrbit
             Layout(true);
             if (intro) Appear(added);
             else foreach (var n in added) n.Appear(0, o, false);
+            if (error == null) Outbox.Seen(list);   // 有攒着的设备上线了：卫星落进去，照常发
+        }
+
+        // 待送变了（排进来、开始发、取消、没送到）：各设备绕的卫星跟着增减，排位置时给它们留出地方
+        void OnOutbox()
+        {
+            foreach (var n in nodes.Values) n.Queue(Outbox.For(n.Dev).Count, IsVisible);
+            Layout(true);
         }
 
         static string RingOf(Device d)
@@ -680,12 +708,19 @@ namespace TailOrbit
             fan = null;
         }
 
-        // 在线：[终端] [读剪贴板（Mac）] [网页] 发文件 复制域名 掉线提醒，第一个是实心的；离线只剩复制域名和掉线提醒
+        // 在线：[终端] [读剪贴板（Mac）] [网页] 发文件 复制域名 掉线提醒，第一个是实心的；
+        // 离线：发文件（先排着） [取消待送] 复制域名 掉线提醒
         List<FanItem> MenuFor(Node n, int webPort)
         {
             var d = n.Dev;
             var list = new List<FanItem>();
-            if (d.Online)
+            if (!d.Online)
+            {
+                list.Add(new FanItem { Icon = "send", Label = L.T("发送文件"), Detail = L.T("上线后自动发送"), Act = () => PickAndSend(n) });
+                var due = Outbox.For(d);
+                if (due.Count > 0) list.Add(new FanItem { Icon = "x", Label = L.T("取消发送"), Detail = Ui.Describe(due.SelectMany(x => x.Paths).ToList()), Act = () => Outbox.Cancel(d) });
+            }
+            else
             {
                 string ssh = Ssh.Target(d);
                 if (ssh != null) list.Add(new FanItem { Icon = "terminal", Label = L.T("终端"), Detail = "ssh " + ssh, Act = () => Ssh.Open(ssh) });
@@ -861,9 +896,10 @@ namespace TailOrbit
             return a == null || a.Length == 0 ? null : a.ToList();
         }
 
+        // 离线的也收：先排着，对方上线了自动发
         static bool Accepts(Node n)
         {
-            return n.Dev.Online && !n.Busy && !n.Gone;
+            return !n.Busy && !n.Gone;
         }
 
         Node HitTest(Point p)
@@ -1000,7 +1036,8 @@ namespace TailOrbit
 
         void Send(Node n, List<string> paths)
         {
-            if (n.Busy || !n.Dev.Online) return;
+            if (!n.Dev.Online) { Outbox.Add(n.Dev, paths); return; }
+            if (n.Busy) return;
             Begin(n, new SendJob { Target = n.Dev, Paths = paths });
         }
 
@@ -1169,12 +1206,14 @@ namespace TailOrbit
 
         FrameworkElement Tabs()
         {
-            tabs = new Segmented(th, new[] { L.T("星网"), L.T("分享"), L.T("网络"), L.T("云盘"), L.T("本机") }, 0, false, false, 32, true) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 7, 0, 0) };
+            tabs = new Segmented(th, new[] { L.T("星网"), L.T("分享"), L.T("网络"), L.T("云盘"), L.T("本机"), L.T("设置") }, 0, false, false, 32, true) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 7, 0, 0) };
             tabs.Picked += i => Switch(PageKeys[i]);
             return tabs;
         }
 
         Page CurrentPage { get { return pages[current] as Page; } }
+
+        public string PageKey { get { return current; } }
 
         FrameworkElement MakePage(string key)
         {
@@ -1184,6 +1223,7 @@ namespace TailOrbit
                 case "net": return new NetPage(host, ip => { Node n; return nodes.TryGetValue(ip, out n) ? n.Angle : double.NaN; });   // 设备方向跟星网一致
                 case "drive": return new DrivePage(host);
                 case "device": return new DevicePage(host);
+                case "settings": return new SettingsPage(host);
                 default: return null;
             }
         }
@@ -1245,7 +1285,7 @@ namespace TailOrbit
         {
             var icon = new Image { Width = 20, Height = 20, VerticalAlignment = VerticalAlignment.Center };
             RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
-            Action pick = () => icon.Source = Ui.IconFrame(20 * VisualTreeHelper.GetDpi(this).DpiScaleX);   // 按屏幕缩放取最贴近的那一帧，小图才清楚
+            Action pick = () => icon.Source = Ui.IconFrame(20 * VisualTreeHelper.GetDpi(this).DpiScaleX, !th.Dark);   // 按屏幕缩放取最贴近的那一帧，小图才清楚
             Loaded += delegate { pick(); };
             DpiChanged += delegate { pick(); };
             var name = new TextBlock { Text = "TailOrbit", FontFamily = Ui.DisplayFont, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = th.Fg, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 0, 0) };

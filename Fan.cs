@@ -1,4 +1,4 @@
-// 点星网上的设备弹出的一圈按钮：终端、网页、发文件、复制域名、掉线提醒。
+// 点星网上的设备弹出的一圈按钮：终端、网页、发文件、取消待送、复制域名、掉线提醒。
 // 按钮从设备里飞出来，排在背向本机的一侧（贴边时整串转进来）；旁边一块小牌子说指着的那个按钮会做什么，终端写出实际执行的 ssh 命令。
 using System;
 using System.Collections.Generic;
@@ -168,10 +168,11 @@ namespace TailOrbit
             u.Normalize();
             int side = u.X < -0.45 ? -1 : u.X > 0.45 ? 1 : 0;
             bool up = u.Y < 0;
+            double edge = p.Y;   // 放上下时贴着哪一行：平时是这个按钮
             double room = side < 0 ? At.X + p.X - 36 : area.Width - 8 - (At.X + p.X + 28);
             if (side != 0 && w > room)
             {
-                // 这一侧放不下：先把后面那串（多半是长域名）截短；还不够就改放上下——竖着的一串上半截放上面、下半截放下面，不压着别的按钮
+                // 这一侧放不下：先把后面那串（多半是长域名）截短；还不够就改放上下——竖着的一串上半截放到整串上面、下半截放到整串下面，不压着别的按钮
                 double cut = tagDetail.DesiredSize.Width - tagDetail.Margin.Left - (w - room);
                 if (it.Detail != "" && cut >= 60)
                 {
@@ -183,11 +184,12 @@ namespace TailOrbit
                 {
                     side = 0;
                     up = 2 * i < items.Count - 1 || (2 * i == items.Count - 1 && u.Y < 0);
+                    edge = up ? spots.Min(s => s.Y) : spots.Max(s => s.Y);
                 }
             }
             double x, y;
             if (side != 0) { x = side < 0 ? p.X - 28 - w : p.X + 28; y = p.Y - 14; }
-            else { x = p.X - w / 2; y = up ? p.Y - 56 : p.Y + 28; }
+            else { x = p.X - w / 2; y = up ? edge - 56 : edge + 28; }
             x = Math.Max(8 - At.X, Math.Min(area.Width - 8 - w - At.X, x));
             y = Math.Max(52 - At.Y, Math.Min(area.Height - 36 - At.Y, y));
             Canvas.SetLeft(tag, x);
