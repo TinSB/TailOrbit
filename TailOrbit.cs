@@ -44,7 +44,7 @@ using Drawing = System.Drawing;
 // 任务管理器等处显示的名字
 [assembly: System.Reflection.AssemblyTitle("TailOrbit")]
 [assembly: System.Reflection.AssemblyProduct("TailOrbit")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
 
 namespace TailOrbit
 {
