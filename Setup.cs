@@ -1,5 +1,5 @@
 // 安装和卸载。发布出去的 TailOrbit-Setup-<版本>.exe 就是本程序换了个名字：双击它（或带 --install）把自己装到
-// %LOCALAPPDATA%\Programs\TailOrbit——不用管理员权限，放进开始菜单，登记到“设置 → 应用”，从那里卸载（--uninstall）。
+// %LOCALAPPDATA%\Programs\TailOrbit——不用管理员权限，放进开始菜单和资源管理器右键的“发送到”（都在自己的用户文件夹里），登记到“设置 → 应用”，从那里卸载（--uninstall）。
 // 换新版就再运行一次安装：先叫开着的那个退出，再换掉程序，设置和记录都留着。
 // --quiet 不弹窗口（给脚本用），装好开在托盘里，再加 --open 打开主界面（程序自己更新时用）；卸载时再加 --purge，连设置、传输记录一起删
 using System;
@@ -32,6 +32,8 @@ namespace TailOrbit
         public static readonly string Exe = Path.Combine(Dir, "TailOrbit.exe");
         static readonly string Data = Path.Combine(Local, "TailOrbit");
         static readonly string Link = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "TailOrbit.lnk");
+        // 右键 →“发送到”里的那一项：选中的文件跟在 --send 后面一次传过来（Windows 11 的新菜单里在“显示更多选项”下面）
+        public static string SendTo = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.SendTo), "TailOrbit.lnk");
         static readonly string Self = Assembly.GetExecutingAssembly().Location;
 
         public static string Version
@@ -94,8 +96,12 @@ namespace TailOrbit
                 Directory.CreateDirectory(Dir);
                 if (!Same(Self, Exe)) Copy(Self, Exe);
                 WriteIcons();
-                try { Shortcut(); }
-                catch (COMException) { }   // 有的公司电脑禁了 WScript.Shell：没有开始菜单那一项，程序照样能用
+                try
+                {
+                    Shortcut(Link, "");
+                    Shortcut(SendTo, "--send");
+                }
+                catch (COMException) { }   // 有的公司电脑禁了 WScript.Shell：没有开始菜单、“发送到”那一项，程序照样能用
                 Register();
                 using (var k = Registry.CurrentUser.CreateSubKey(Autostart.RunKey))
                 {
@@ -126,6 +132,7 @@ namespace TailOrbit
                     if (k != null && string.Equals(k.GetValue("TailOrbit") as string, Autostart.For(Exe), StringComparison.OrdinalIgnoreCase)) k.DeleteValue("TailOrbit");
                 Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false);
                 File.Delete(Link);
+                File.Delete(SendTo);
                 if (purge) { if (Directory.Exists(Data)) Directory.Delete(Data, true); }
                 else if (File.Exists(Path.Combine(Data, "island.json"))) File.Delete(Path.Combine(Data, "island.json"));   // 桌面小组件看它知道 TailOrbit 在不在
                 return null;
@@ -176,11 +183,13 @@ namespace TailOrbit
             }
         }
 
-        static void Shortcut()
+        static void Shortcut(string link, string args)
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(link));
             dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-            var s = shell.CreateShortcut(Link);
+            var s = shell.CreateShortcut(link);
             s.TargetPath = Exe;
+            s.Arguments = args;
             s.WorkingDirectory = Dir;
             s.Description = "TailOrbit";
             s.IconLocation = IconFile(Ui.SystemLight) + ",0";
@@ -203,7 +212,7 @@ namespace TailOrbit
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern void SHChangeNotify(int eventId, int flags, string item1, IntPtr item2);
 
-        // 装好的这一份开着时：Windows 的深浅色和开始菜单那一项的图标对不上就换过去（启动时、Windows 换深浅色时各看一次）
+        // 装好的这一份开着时：Windows 的深浅色和开始菜单、“发送到”那一项的图标对不上就换过去（启动时、Windows 换深浅色时各看一次）
         public static void Restyle()
         {
             if (!Same(Self, Exe) || !File.Exists(Link)) return;
@@ -212,12 +221,17 @@ namespace TailOrbit
                 string icon = IconFile(Ui.SystemLight);
                 if (!File.Exists(icon)) WriteIcons();
                 dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-                var s = shell.CreateShortcut(Link);
-                if (string.Equals((string)s.IconLocation, icon + ",0", StringComparison.OrdinalIgnoreCase)) return;
-                s.IconLocation = icon + ",0";
-                s.Save();
-                using (var k = Registry.CurrentUser.OpenSubKey(UninstallKey, true)) if (k != null) k.SetValue("DisplayIcon", icon);
-                SHChangeNotify(0x2000, 0x0005, Link, IntPtr.Zero);   // SHCNE_UPDATEITEM、SHCNF_PATHW：叫开始菜单重读这一项
+                bool changed = false;
+                foreach (var link in new[] { Link, SendTo }.Where(File.Exists))
+                {
+                    var s = shell.CreateShortcut(link);
+                    if (string.Equals((string)s.IconLocation, icon + ",0", StringComparison.OrdinalIgnoreCase)) continue;
+                    s.IconLocation = icon + ",0";
+                    s.Save();
+                    SHChangeNotify(0x2000, 0x0005, link, IntPtr.Zero);   // SHCNE_UPDATEITEM、SHCNF_PATHW：叫开始菜单、资源管理器重读这一项
+                    changed = true;
+                }
+                if (changed) using (var k = Registry.CurrentUser.OpenSubKey(UninstallKey, true)) if (k != null) k.SetValue("DisplayIcon", icon);
             }
             catch (COMException e) { Log.Write(e); }                 // 公司电脑禁了 WScript.Shell
             catch (IOException e) { Log.Write(e); }

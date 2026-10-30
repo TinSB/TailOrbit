@@ -126,6 +126,12 @@ namespace TailOrbit
         string scanError;                    // 开放检查上次记进日志的错：一直是同一个错就不每半分钟记一遍
         TextBlock cardPath;
         Border cardFoot;
+        readonly StackPanel offBox;          // 断开了、没登录：整页换成一句话和“连接”“登录”
+        readonly TextBlock offTitle, offNote;
+        readonly IconView offIcon;
+        readonly Border offButton;
+        string offFor;                       // 现在是哪种状态（null 是连着）
+        bool offBusy;
 
         public NetPage(Host host, Func<string, double> homeAngle) : base(host)
         {
@@ -195,6 +201,16 @@ namespace TailOrbit
             };
             Children.Add(field);
             Children.Add(panel);
+            offTitle = new TextBlock { FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 22, 0, 8) };
+            offNote = new TextBlock { FontSize = 13.5, LineHeight = 20, Foreground = Th.Mute, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, MaxWidth = 360 };
+            offButton = Kit.Button(Th, "", true, FixState);
+            offButton.HorizontalAlignment = HorizontalAlignment.Center;
+            offButton.Margin = new Thickness(0, 22, 0, 0);
+            var disc = Kit.Disc(Th, "unlink", 96, false);
+            disc.HorizontalAlignment = HorizontalAlignment.Center;
+            offIcon = (IconView)disc.Children[1];
+            offBox = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 44, 0, 0), Children = { disc, offTitle, offNote, offButton } };
+            Children.Add(offBox);
             field.SizeChanged += delegate { Layout(false); };
             SizeChanged += delegate
             {
@@ -324,6 +340,9 @@ namespace TailOrbit
             if (s.Shares != null) { shares = s.Shares; sharesAt = DateTime.Now; }
             if (s.Upstream != null) upstream = s.Upstream;
             if (s.Status == null) { RenderChecks(); return; }
+            string state = (Tailscale.Get(s.Status, "BackendState") as string) ?? "";
+            ShowOff(state == "Running" ? null : state, true.Equals(Tailscale.Get(s.Status, "HaveNodeKey")));
+            if (offFor != null) return;
             var self = Tailscale.Get(s.Status, "Self") as Dictionary<string, object>;
             selfName = Tailscale.ShortName(self);
             selfRelay = (Tailscale.Get(self, "Relay") as string) ?? "";
@@ -376,6 +395,36 @@ namespace TailOrbit
             if (intro) Intro();
             else foreach (var d in added) Appear(d, 0);
             RenderChecks();
+        }
+
+        // 断开了、没登录、等管理员批准：星图和右边的体检都没有意义，整页换成一句话和按钮；连上了换回来
+        void ShowOff(string state, bool haveKey)
+        {
+            offFor = state;
+            bool off = state != null;
+            field.Visibility = panel.Visibility = off ? Visibility.Hidden : Visibility.Visible;
+            if (!off) { offBox.Visibility = Visibility.Collapsed; return; }
+            offIcon.Show(state == "Stopped" ? "unlink" : state == "Starting" ? "link" : "key");
+            offTitle.Text = Account.Describe(state, haveKey);
+            offNote.Text = state == "NeedsMachineAuth" ? L.T("管理员在管理控制台批准这台电脑后就能连上。") : state == "Starting" ? "" : L.T("连上以后，这里显示各台设备走的路、延迟和流量。");
+            string label = Account.FixLabel(state, haveKey);
+            if (label != null && !offBusy) ((TextBlock)offButton.Child).Text = label;
+            offButton.Visibility = label != null ? Visibility.Visible : Visibility.Collapsed;
+            if (offBox.Visibility == Visibility.Visible) return;
+            offBox.Visibility = Visibility.Visible;
+            Ui.AnimFrom(offBox, OpacityProperty, 0, 1, 300);
+        }
+
+        async void FixState()
+        {
+            if (offBusy || offFor == null) return;
+            offBusy = true;
+            string state = offFor;
+            if (state == "Stopped") ((TextBlock)offButton.Child).Text = L.T("正在连接…");
+            string why = await Account.Fix(state);
+            offBusy = false;
+            Poll();
+            if (!string.IsNullOrEmpty(why)) Host.Notify(state == "Stopped" ? L.T("连接失败") : L.T("登录失败"), why);
         }
 
         // 跟上一次比：这段时间收了多少、发了多少

@@ -1,6 +1,6 @@
 // TailOrbit：Tailscale 的 Windows 小工具——把文件拖到设备上，就用 Taildrop 发过去
 // 主界面（MainWindow.cs、Star.cs）：点托盘图标或开始菜单打开。“星网”——本机在中间，设备按直连 / 中继 / 离线排在三圈上；
-// 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、网页、发文件、复制域名、掉线提醒）；
+// 把文件拖到设备上就用 Taildrop 发过去；点设备弹出一圈按钮（Fan.cs：终端、远程桌面、网页、发文件、复制域名、掉线提醒）；
 // 别的设备发来文件时光点流进本机（Inbox.cs）；左下是最近发过和收到的。退出在托盘菜单。
 // 设置页（SettingsPage.cs）：本机在 Tailscale 里的名字和地址、出口节点、Tailscale 的常用开关；深浅色、开机自启、界面语言、两个剪贴板开关、收听本机声音；
 // 检查更新、自动下载更新（Updates.cs，从 GitHub 发布页下载安装程序）。
@@ -10,7 +10,9 @@
 // 剪贴板互通（ClipShare.cs）：自己的手机、Mac 读这台电脑的剪贴板，iPhone 把剪贴板发过来；按 Win+Alt+V 读 Mac 的剪贴板。
 // 和 Mac 共用剪贴板（ClipSync.cs）：哪边复制，两边粘贴出来的都是它。
 // 在手机上收听本机声音（SoundShare.cs）：自己的手机打开一个网页，就用手机和连着它的耳机听这台电脑正在放的声音，只差几十毫秒。
-// 托盘菜单（TrayMenu.cs）：右键托盘图标，打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
+// 托盘菜单（TrayMenu.cs）：右键托盘图标，最上面是连接 Tailscale 的开关（没登录时是“登录”），再是打开主界面、发文件、看收到的文件、开终端、两个剪贴板开关、退出。
+// Tailscale 本身（Account.cs）：连着没有、登录哪个账号、换账号、退出登录；Tailscale 自己的托盘程序没开着时替它提醒要登录、密钥快到期、报的问题。
+// 资源管理器右键 →“发送到”→ TailOrbit（安装时放进“发送到”文件夹）：带着选中的文件弹出快捷面板。
 // 环礁接口（Island.cs）：给屏幕顶上的通知岛用的本机接口——设备列表、发文件、收发进度和剪贴板动静；岛连着时不弹托盘通知。
 // 安装、卸载（Setup.cs）：发布的 TailOrbit-Setup-<版本>.exe 就是本程序改了名，双击装到 %LOCALAPPDATA%\Programs\TailOrbit；从“设置 → 应用”卸载。
 // 编译：powershell -ExecutionPolicy Bypass -File build.ps1（用 Windows 自带的 .NET Framework 4.8 编译器，只认 C# 5 语法）
@@ -51,8 +53,11 @@ namespace TailOrbit
     static class Program
     {
         public const string ShowEventName = @"Local\TailOrbit.ShowMain";
+        public const int SendTag = 0x544F;   // WM_COPYDATA 里认这个：是又启动的那一份交过来要发的文件
 
         [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int processId);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, ref CopyData data);
 
         [STAThread]
         static void Main(string[] args)
@@ -64,14 +69,18 @@ namespace TailOrbit
                 Environment.ExitCode = Setup.Run(setup, args);
                 return;
             }
+            // 资源管理器里右键 →“发送到”→ TailOrbit：选中的文件都跟在 --send 后面，一次带齐
+            int at = Array.IndexOf(args, "--send");
+            var send = at < 0 ? null : args.Skip(at + 1).ToList();
             bool first;
             using (new Mutex(true, @"Local\TailOrbit.Single", out first))
             {
                 if (!first)
                 {
-                    // 已经在运行（比如又从开始菜单点了一次）：叫它把主界面拿出来。
+                    // 已经在运行（比如又从开始菜单点了一次）：叫它把主界面拿出来；带着文件来的，交给它弹快捷面板。
                     // 这次启动带着“可以切到前台”的许可，先转给它，不然主界面只会在任务栏上闪
                     AllowSetForegroundWindow(-1);   // ASFW_ANY
+                    if (send != null) { Hand(Host.SinkName, send); return; }
                     EventWaitHandle show;
                     if (EventWaitHandle.TryOpenExisting(ShowEventName, out show)) using (show) show.Set();
                     return;
@@ -84,10 +93,31 @@ namespace TailOrbit
                 // 以前是托盘的 WinForms 菜单顺手装上的，菜单换成自己画的以后要自己装
                 SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(app.Dispatcher));
                 L.Use(Settings.Language);
-                new Host().Start(!args.Contains("--tray"));
+                var host = new Host();
+                host.Start(!args.Contains("--tray") && send == null);
+                if (send != null) host.Take(send);
                 app.Run();
             }
         }
+
+        // 交给已经开着的那个：发到它收热键的那个隐藏窗口（sink 是窗口名），一行一个路径
+        static void Hand(string sink, List<string> paths)
+        {
+            IntPtr w = FindWindowEx(new IntPtr(-3), IntPtr.Zero, null, sink);   // HWND_MESSAGE 下面的
+            if (w == IntPtr.Zero) return;
+            string text = string.Join("\n", paths);
+            var data = new CopyData { Tag = new IntPtr(SendTag), Size = text.Length * 2, Data = Marshal.StringToHGlobalUni(text) };
+            try { SendMessage(w, 0x004A, IntPtr.Zero, ref data); }   // WM_COPYDATA
+            finally { Marshal.FreeHGlobal(data.Data); }
+        }
+    }
+
+    // WM_COPYDATA 带的东西（COPYDATASTRUCT）
+    struct CopyData
+    {
+        public IntPtr Tag;
+        public int Size;    // 字节数
+        public IntPtr Data;
     }
 
     // 程序是 csc 直接编出来的 IL，第一次用到的代码都要在界面线程上现场编译（全部加起来约 0.35 秒），
@@ -161,7 +191,10 @@ namespace TailOrbit
     {
         public List<Device> Devices = new List<Device>();
         public Device Self;
-        public string Error;   // null 表示正常
+        public string Error;          // null 表示正常
+        public string State = "";     // Tailscale 的状态（Running、Stopped、NeedsLogin…）；"" 是读不到
+        public bool HaveKey;          // 登录过（没登录时给“登录”，登录过期时给“重新登录”）
+        public bool Calm { get { return Error != null && State != "" && State != "Running"; } }   // 断开了、没登录这类：不算出错
     }
 
     class CmdResult
@@ -203,11 +236,42 @@ namespace TailOrbit
             }
         }
 
+        // 最多等 ms 毫秒（up、login 这类要等 Tailscale 连上才退出的）：到点还没完就结束它，Code 是 -1
+        public static CmdResult Run(string args, int ms)
+        {
+            using (var p = ChildJob.Start(Psi(args)))
+            {
+                var output = p.StandardOutput.ReadToEndAsync();
+                var err = p.StandardError.ReadToEndAsync();
+                var r = new CmdResult { Code = -1 };
+                if (p.WaitForExit(ms)) r.Code = p.ExitCode;
+                else
+                {
+                    try { p.Kill(); }
+                    catch (InvalidOperationException) { }   // 刚好自己退出了
+                    p.WaitForExit();
+                }
+                r.Out = output.Result;
+                r.Err = err.Result;
+                return r;
+            }
+        }
+
         // 能用 Taildrop 接收的设备（只有自己名下的，在线的排前面），外加本机信息
         public static Snapshot Load()
         {
             var snap = new Snapshot();
             var targets = Run("file cp --targets");
+            var status = Run("status --json");
+            var root = status.Code == 0 ? Json(status.Out) : null;
+            snap.State = (Get(root, "BackendState") as string) ?? "";
+            snap.HaveKey = true.Equals(Get(root, "HaveNodeKey"));
+            // 断开了、没登录、等管理员批准：status 照样读得出来，星网上说清楚是哪种、给个按钮，不当成出错
+            if (snap.State != "" && snap.State != "Running")
+            {
+                snap.Error = Account.Describe(snap.State, snap.HaveKey);
+                return snap;
+            }
             if (targets.Code != 0)
             {
                 snap.Error = Explain(targets.Err);
@@ -224,17 +288,13 @@ namespace TailOrbit
                 d.Online = parts.Length < 3 || !parts[2].StartsWith("offline");
                 list.Add(d);
             }
-            var status = Run("status --json");
-            if (status.Code == 0) FillFromStatus(snap, list, status.Out);
+            if (root != null) FillFromStatus(snap, list, root);
             snap.Devices = list.Where(d => d.Online).Concat(list.Where(d => !d.Online)).ToList();
             return snap;
         }
 
-        static void FillFromStatus(Snapshot snap, List<Device> list, string json)
+        static void FillFromStatus(Snapshot snap, List<Device> list, Dictionary<string, object> root)
         {
-            var js = new JavaScriptSerializer();
-            js.MaxJsonLength = int.MaxValue;
-            var root = js.DeserializeObject(json) as Dictionary<string, object>;
             var self = Get(root, "Self") as Dictionary<string, object>;
             if (self != null) snap.Self = ToDevice(self);
             var peers = Get(root, "Peer") as Dictionary<string, object>;
@@ -1096,11 +1156,13 @@ namespace TailOrbit
         public bool HotkeyOk { get; private set; }   // Ctrl+Alt+A 注册上了：托盘菜单里给它画键帽
         public event Action Toggled;                 // 托盘菜单拨了剪贴板开关：设置页那两项跟着变
         Action balloonClick;                         // 点托盘通知时做什么（比如打开设置页）；每条通知各管各的
+        readonly List<string> taking = new List<string>();   // “发送到”带来、还没弹面板的文件
+        public const string SinkName = "TailOrbitHotkey";    // 收热键、收别的启动交来的文件的隐藏窗口
 
         public void Start(bool showMain)
         {
             panel = new QuickPanel(this);
-            var p = new HwndSourceParameters("TailOrbitHotkey");
+            var p = new HwndSourceParameters(SinkName);
             p.ParentWindow = new IntPtr(-3);   // HWND_MESSAGE：只收消息的隐藏窗口
             p.WindowStyle = 0;
             p.Width = 0;
@@ -1137,11 +1199,12 @@ namespace TailOrbit
             SoundShare.Start(this);
             ClipSync.Start(this);
             Island.Start(this);
+            Account.Start(this);
             var sweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             sweep.Tick += delegate { Sweep(); };
             sweep.Start();
             Sweep();
-            Inbox.Start();
+            Inbox.Start(this);
             Alerts.Start(this);
             Outbox.Start(this);
             Updates.Start(this);
@@ -1222,7 +1285,7 @@ namespace TailOrbit
         // 菜单建的时候读的那些：变了备好的那份就作废
         string MenuState()
         {
-            return L.Code + "|" + Theme.Dark + "|" + HotkeyOk + "|" + Settings.ClipOn + "|" + Settings.SyncMac;
+            return L.Code + "|" + Theme.Dark + "|" + HotkeyOk + "|" + Settings.ClipOn + "|" + Settings.SyncMac + "|" + Account.MenuKey;
         }
 
         // 从托盘的“隐藏图标”区点开时，那个弹窗收起会抢焦点，等它收完再把窗口拿到前面
@@ -1236,6 +1299,22 @@ namespace TailOrbit
         public void SendFromTray()
         {
             Ui.After(250, () => panel.ShowFor(new List<string>()));
+        }
+
+        // 资源管理器“发送到”带来的文件：先攒 0.3 秒（别的右键菜单可能一个文件起一个进程），再带着它们弹出快捷面板挑设备。
+        // 和按 Ctrl+Alt+A 时一样，只要还在的文件和文件夹（不要整个盘）
+        public void Take(List<string> paths)
+        {
+            bool idle = taking.Count == 0;
+            foreach (var p in paths)
+                if ((File.Exists(p) || (Directory.Exists(p) && System.IO.Path.GetPathRoot(p) != p)) && !taking.Contains(p)) taking.Add(p);
+            if (!idle || taking.Count == 0) return;
+            Ui.After(300, () =>
+            {
+                var list = taking.ToList();
+                taking.Clear();
+                panel.ShowFor(list);
+            });
         }
 
         public void RaiseToggled()
@@ -1320,6 +1399,15 @@ namespace TailOrbit
             {
                 panel.Dispatcher.BeginInvoke(new Action(() => { ClipSync.Copied(); ClipShare.Copied(); }));
                 return IntPtr.Zero;
+            }
+            if (msg == 0x004A)   // WM_COPYDATA：又启动了一次，带着“发送到”过来的文件
+            {
+                var data = (CopyData)Marshal.PtrToStructure(lParam, typeof(CopyData));
+                if (data.Tag.ToInt64() != Program.SendTag) return IntPtr.Zero;
+                var paths = Marshal.PtrToStringUni(data.Data, data.Size / 2).Split('\n').ToList();
+                handled = true;
+                panel.Dispatcher.BeginInvoke(new Action(() => Take(paths)));
+                return new IntPtr(1);
             }
             if (msg != 0x0312) return IntPtr.Zero;   // WM_HOTKEY
             if (menu != null) menu.Dismiss();

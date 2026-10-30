@@ -1,5 +1,5 @@
 // 右键托盘图标弹出的菜单：和主界面的弹出列表一个样子（圆角卡片、悬停淡底、同一套图标），放常用的几件事——
-// 打开主界面、发文件、看收到的文件、开终端（指着它列出能连的设备）、两个剪贴板开关、退出。
+// 最上面连接 Tailscale 的开关（没登录、登录过期时换成“登录”），再是打开主界面、发文件、看收到的文件、开终端（指着它列出能连的设备）、两个剪贴板开关、退出。
 // 菜单和系统菜单一样不抢前台，托盘“隐藏图标”的弹窗不会因为它先收起；点到菜单外面、按 Esc 或 Win 键就收起，
 // 靠的是菜单开着时才装上的全局鼠标、键盘钩子，收起就卸掉
 using System;
@@ -78,7 +78,7 @@ namespace TailOrbit
             var exit = Glyph("exit");
             var quit = Item(exit, exit, L.T("退出"), null, false);
             Act(quit, host.Quit);
-            var rows = new[] { open, sendRow, got, termRow, ClipSwitch(), SyncSwitch(), quit };
+            var rows = new[] { StateRow(), open, sendRow, got, termRow, ClipSwitch(), SyncSwitch(), quit };
             // 指到“终端”稍等一下就弹出子菜单；指到别的行，子菜单稍等一下再关（斜着移过去的路上会擦过别的行）
             foreach (var r in rows)
             {
@@ -90,7 +90,7 @@ namespace TailOrbit
                     else hover++;
                 };
             }
-            foreach (var e in new FrameworkElement[] { rows[0], Line(), rows[1], rows[2], rows[3], Line(), rows[4], rows[5], Line(), rows[6] }) list.Children.Add(e);
+            foreach (var e in new FrameworkElement[] { rows[0], Line(), rows[1], Line(), rows[2], rows[3], rows[4], Line(), rows[5], rows[6], Line(), rows[7] }) list.Children.Add(e);
             card = Card(list);
             card.MinWidth = 236;
             card.MaxWidth = 380;
@@ -269,6 +269,29 @@ namespace TailOrbit
                 Ui.Shake((TranslateTransform)row.RenderTransform);
                 host.Notify(L.T("更改失败"), why);
             };
+            return row;
+        }
+
+        // 最上面一行：连着、断开着是开关（断开就是 tailscale down，连上是不带参数的 tailscale up）；
+        // 没登录、登录过期是“登录”，点了用浏览器登录；等管理员批准时打开管理控制台；Tailscale 没在跑只是说一声，点了打开主界面
+        Border StateRow()
+        {
+            var s = Account.Now;
+            if (!Account.Signing && (s.Backend == "Running" || s.Backend == "Stopped" || s.Backend == "Starting"))
+            {
+                var g = Glyph("port");
+                return Switch(g, g, L.T("连接 Tailscale"), s.Backend != "Stopped", on => on ? Account.Connect() : Account.Disconnect());
+            }
+            var icon = Glyph(s.Backend == "" ? "alert" : "key");
+            string text = Account.Signing ? L.T("正在等待登录…") : s.Backend == "NeedsLogin" ? (s.HaveKey ? L.T("重新登录 Tailscale") : L.T("登录 Tailscale"))
+                : s.Backend == "NeedsMachineAuth" ? L.T("等待管理员批准") : L.T("Tailscale 未运行");
+            var row = Item(icon, icon, text, null, false);
+            if (s.Backend == "" && !Account.Signing) Act(row, host.OpenFromTray);
+            else Act(row, async () =>
+            {
+                string why = await Account.Fix(s.Backend);
+                if (!string.IsNullOrEmpty(why)) host.Notify(L.T("登录失败"), why);
+            });
             return row;
         }
 

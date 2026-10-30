@@ -70,7 +70,10 @@ namespace TailOrbit
         TextBlock selfName, selfIp;
         FrameworkElement setupBox;  // 没装 Tailscale：本机下面的“安装 Tailscale”
         FrameworkElement absent;    // 没装 Tailscale：其余各页整页盖上安装提示
-        bool missing;
+        Grid stateBox;              // 断开了、没登录：本机下面的“连接”“登录”
+        Border stateButton;
+        string stateFor;            // 按钮是给哪种状态的
+        bool missing, stateBusy;
         Device me;
         int selfCopy;
         // 收件：本机外圈走进度，圆盘里是百分比，收完打个勾
@@ -164,7 +167,8 @@ namespace TailOrbit
             History.Changed += OnHistory;
             Inbox.Changed += OnInbox;
             Outbox.Changed += OnOutbox;
-            Closed += delegate { History.Changed -= OnHistory; Inbox.Changed -= OnInbox; Outbox.Changed -= OnOutbox; };   // 换语言时旧窗口关掉，别再收事件
+            Account.Changed += OnAccount;
+            Closed += delegate { History.Changed -= OnHistory; Inbox.Changed -= OnInbox; Outbox.Changed -= OnOutbox; Account.Changed -= OnAccount; };   // 换语言时旧窗口关掉，别再收事件
             refresh.Tick += delegate { if (WindowState != WindowState.Minimized) Reload(); };
             IsVisibleChanged += delegate
             {
@@ -386,12 +390,18 @@ namespace TailOrbit
             Canvas.SetLeft(setupBox, -140);
             Canvas.SetTop(setupBox, 92);
             WindowChrome.SetIsHitTestVisibleInChrome(setupBox, true);
+            stateButton = Kit.Button(th, "", true, FixState);
+            stateBox = new Grid { Width = 280, Visibility = Visibility.Collapsed, Children = { new Border { Background = th.Bg, Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(18), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Child = stateButton } } };
+            Canvas.SetLeft(stateBox, -140);
+            Canvas.SetTop(stateBox, 92);
+            WindowChrome.SetIsHitTestVisibleInChrome(stateBox, true);
             self.Children.Add(halo);
             self.Children.Add(selfRipple);
             self.Children.Add(selfArc);
             self.Children.Add(disc);
             self.Children.Add(selfLabel);
             self.Children.Add(setupBox);
+            self.Children.Add(stateBox);
             return self;
         }
 
@@ -492,16 +502,49 @@ namespace TailOrbit
             else Ui.Unloop(selfSpin, RotateTransform.AngleProperty);
         }
 
-        // Tailscale 没在跑、没登录：本机变成空心圈，打个红色感叹号，名字的位置写原因
-        void ShowSelf(string error)
+        // Tailscale 没在跑：本机变成空心圈，打个红色感叹号，名字的位置写原因。
+        // 断开了、没登录（calm）不算出错：一样是空心圈，灰色的断开 / 钥匙图标，下面给“连接”“登录”
+        void ShowSelf(string error, bool calm)
         {
             bool ok = error == null;
             Ui.Tint(selfFace, ok ? th.FgColor : Theme.Fade(th.FgColor, 0), 300);
             Ui.Tint(selfRim, ok ? Theme.Fade(th.DimColor, 0) : th.DimColor, 300);
-            Ui.Tint(selfInk, ok ? th.InkColor : th.BadColor, 300);
-            selfIcon.Show(ok ? "monitor" : "alert");
+            Ui.Tint(selfInk, ok ? th.InkColor : calm ? th.MuteColor : th.BadColor, 300);
+            selfIcon.Show(ok ? "monitor" : !calm ? "alert" : stateFor == "Stopped" ? "unlink" : stateFor == "Starting" ? "link" : "key");
             selfName.Text = ok ? (me != null ? me.Name : "") : error;
             selfIp.Text = me != null ? me.Ip : "";
+        }
+
+        void ShowState(Snapshot snap)
+        {
+            stateFor = snap != null && snap.Calm ? snap.State : null;
+            string label = stateFor == null ? null : Account.FixLabel(stateFor, snap.HaveKey);
+            if (label != null && !stateBusy) ((TextBlock)stateButton.Child).Text = label;
+            bool show = label != null && !missing;
+            if (show && stateBox.Visibility != Visibility.Visible)
+            {
+                stateBox.Visibility = Visibility.Visible;
+                Ui.AnimFrom(stateBox, OpacityProperty, 0, 1, 300);
+            }
+            else if (!show) stateBox.Visibility = Visibility.Collapsed;
+        }
+
+        // 本机下面那个按钮：断开着就连上，没登录就去浏览器登录，等批准就打开管理控制台
+        async void FixState()
+        {
+            if (stateBusy || stateFor == null) return;
+            stateBusy = true;
+            if (stateFor == "Stopped") ((TextBlock)stateButton.Child).Text = L.T("正在连接…");
+            string why = await Account.Fix(stateFor);
+            stateBusy = false;
+            Reload();
+            if (!string.IsNullOrEmpty(why)) host.Notify(stateFor == "Stopped" ? L.T("连接失败") : L.T("登录失败"), why);
+        }
+
+        // 连上、断开、换了账号（托盘菜单、设置页、别处的 Tailscale 改的）：星网马上跟着变，不等下一次定时刷新
+        void OnAccount()
+        {
+            if (IsVisible) Reload();
         }
 
         // 没装 Tailscale：星网上本机下面出“安装 Tailscale”，其余各页整页盖上安装提示；装上了都收起
@@ -553,7 +596,8 @@ namespace TailOrbit
             missing = snap == null && TailscaleSetup.Missing;
             string error = snap == null ? (missing ? L.T("未安装 Tailscale") : L.T("无法读取设备列表")) : snap.Error;
             me = snap == null ? null : snap.Self;
-            ShowSelf(error);
+            ShowState(snap);
+            ShowSelf(error, snap != null && snap.Calm);
             ShowMissing();
             if (was && !missing) ReloadPage();   // 在别处装上了 Tailscale：盖着的那一页重新加载
             var list = error == null ? snap.Devices : new List<Device>();
@@ -708,12 +752,13 @@ namespace TailOrbit
             fan = null;
         }
 
-        // 在线：[终端] [读剪贴板（Mac）] [网页] 发文件 复制域名 掉线提醒，第一个是实心的；
+        // 在线：[终端] [远程桌面（Windows）] [读剪贴板（Mac）] [网页] 发文件 复制域名 掉线提醒，第一个是实心的；
         // 离线：发文件（先排着） [取消待送] 复制域名 掉线提醒
         List<FanItem> MenuFor(Node n, int webPort)
         {
             var d = n.Dev;
             var list = new List<FanItem>();
+            string name = d.Dns != "" ? d.Dns : d.Ip;
             if (!d.Online)
             {
                 list.Add(new FanItem { Icon = "send", Label = L.T("发送文件"), Detail = L.T("上线后自动发送"), Act = () => PickAndSend(n) });
@@ -724,6 +769,8 @@ namespace TailOrbit
             {
                 string ssh = Ssh.Target(d);
                 if (ssh != null) list.Add(new FanItem { Icon = "terminal", Label = L.T("终端"), Detail = "ssh " + ssh, Act = () => Ssh.Open(ssh) });
+                // Windows 自带的远程桌面连接，按 Tailscale 里的名字连过去（对方要开着远程桌面）
+                if (d.Os == "windows") list.Add(new FanItem { Icon = "remote", Label = L.T("远程桌面"), Detail = name, Act = () => Ui.Launch(() => Process.Start("mstsc.exe", "/v:" + name)) });
                 if (ClipShare.Readable(d)) list.Add(new FanItem { Icon = "clipboard", Label = L.T("读取剪贴板"), Detail = ClipShare.Hotkey ?? "", Act = () => ClipShare.Pull(d) });
                 if (webPort > 0)
                 {
@@ -733,7 +780,6 @@ namespace TailOrbit
                 list.Add(new FanItem { Icon = "send", Label = L.T("发送文件"), Act = () => PickAndSend(n) });
                 list[0].Primary = true;
             }
-            string name = d.Dns != "" ? d.Dns : d.Ip;
             list.Add(new FanItem
             {
                 Icon = "copy", Label = L.T("复制域名"), Detail = name,

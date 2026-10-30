@@ -1,4 +1,5 @@
-// 设置页：左边是这台电脑在 Tailscale 里叫什么（点一下改名）、地址、账号和 Tailscale 版本（有新版本时一键更新）；右边一节一节往下排：出口节点（标出推荐的那台，可以在不信任的网络上自动使用）、
+// 设置页：左边是这台电脑在 Tailscale 里叫什么（点一下改名）、地址、连着没有（连接、断开、登录）、账号（点开换账号、添加账号、退出登录）和 Tailscale 版本（有新版本时一键更新）；
+// 右边一节一节往下排：出口节点（标出推荐的那台，可以在不信任的网络上自动使用）、
 // Tailscale 的常用开关（tailscale set）、共享本机所在的局域网、管理接口（连上以后网络页能直接批准、删设备、关密钥到期）、外观（跟随系统 / 浅色 / 深色）、
 // 常规（开机自启、界面语言、连接变差时提醒）、剪贴板（剪贴板互通、和 Mac 共用剪贴板）、声音（在手机上收听），最后是 TailOrbit 自己的版本和更新（检查更新、自动下载更新）。右边放不下，用滚轮往下翻
 using System;
@@ -74,6 +75,14 @@ namespace TailOrbit
         readonly DispatcherTimer clip = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
         readonly HashSet<string> stale = new HashSet<string>();   // 打开连接框之前剪贴板里就有的令牌、连不上的令牌：不自动拿
         DateTime watchUntil;   // 点“打开”去生成令牌后的 10 分钟：切去浏览器时连接框会自己收起，收起了也接着看剪贴板
+        TextBlock stateText;
+        Border stateAct;       // 状态那一行右边的按钮：断开 / 连接 / 登录 / 取消
+        Popup accountPop;      // 账号列表
+        DateTime accountClosed, outAt;
+        StackPanel accountBody;
+        List<Account.Profile> profiles;   // null 是还在读
+        string accountError, switchingTo;
+        bool stateBusy, outArmed;
 
         public SettingsPage(Host host) : base(host)
         {
@@ -123,7 +132,13 @@ namespace TailOrbit
             left.Children.Add(dnsRow);
             left.Children.Add(Kit.CopyRow(Th, ip));
             var info = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
-            info.Children.Add(Kit.InfoRow(Th, L.T("账号"), account));
+            stateText = Kit.Text("", 14, Th.Fg);
+            stateAct = Kit.Button(Th, "", false, StateAct);
+            stateAct.Height = 30;
+            stateAct.Padding = new Thickness(12, 0, 12, 0);
+            stateAct.Margin = new Thickness(12, 0, 0, 0);
+            info.Children.Add(Kit.InfoRow(Th, L.T("状态"), new StackPanel { Orientation = Orientation.Horizontal, Children = { stateText, stateAct } }));
+            info.Children.Add(AccountRow());
             info.Children.Add(Kit.InfoRow(Th, L.T("Tailscale 版本"), tsVersion));
             left.Children.Add(info);
             // Tailscale 比官网的稳定版旧时亮出来：一键更新，下面是没更新成的原因
@@ -179,10 +194,11 @@ namespace TailOrbit
             Children.Add(grid);
             RenderExits();
 
-            // 换了网络、自动开关过出口节点：看着这一页时跟着刷新；更新走到哪一步也跟着变
+            // 换了网络、自动开关过出口节点：看着这一页时跟着刷新；更新走到哪一步也跟着变；连上、断开、换了账号也是
             Action changed = () => { if (IsVisible) Load(); };
-            Loaded += delegate { AutoExit.Changed += changed; Updates.Changed += ShowUpdate; ShowUpdate(); };
-            Unloaded += delegate { AutoExit.Changed -= changed; Updates.Changed -= ShowUpdate; clip.Stop(); };
+            Action moved = () => { ShowState(); changed(); if (accountPop != null && accountPop.IsOpen) FillAccounts(); };
+            Loaded += delegate { AutoExit.Changed += changed; Updates.Changed += ShowUpdate; Account.Changed += moved; ShowUpdate(); ShowState(); };
+            Unloaded += delegate { AutoExit.Changed -= changed; Updates.Changed -= ShowUpdate; Account.Changed -= moved; clip.Stop(); };
             clip.Tick += delegate { PeekClipboard(); };
         }
 
@@ -680,6 +696,147 @@ namespace TailOrbit
             FillAdmin();
             if (!adminPop.IsOpen) Host.Notify(L.T("连接管理接口"), why);
             if (adminPop.IsOpen || DateTime.Now < watchUntil) clip.Start();
+        }
+
+        // ---------- 连接和账号 ----------
+
+        // 状态那一行：连着可以断开，断开着可以连上，没登录、登录过期可以登录；正在等浏览器里登录时可以取消
+        void ShowState()
+        {
+            var s = Account.Now;
+            stateText.Text = Account.Signing ? L.T("正在等待登录…") : Account.Describe(s.Backend, s.HaveKey);
+            string label = Account.Signing ? L.T("取消") : s.Backend == "Running" ? L.T("断开") : Account.FixLabel(s.Backend, s.HaveKey);
+            ((TextBlock)stateAct.Child).Text = label ?? "";
+            stateAct.Visibility = label == null || stateBusy ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        async void StateAct()
+        {
+            if (Account.Signing) { Account.Cancel(); return; }
+            if (stateBusy) return;
+            var s = Account.Now;
+            bool quick = s.Backend == "Running" || s.Backend == "Stopped";   // 连接、断开：按钮先收起，做完再出来；登录看“正在等待登录”
+            if (quick) { stateBusy = true; ShowState(); }
+            string why = s.Backend == "Running" ? await Task.Run(() => Account.Disconnect()) : await Account.Fix(s.Backend);
+            stateBusy = false;
+            ShowState();
+            Load();
+            if (!string.IsNullOrEmpty(why)) Host.Notify(L.T("更改失败"), why);
+        }
+
+        // 账号那一行：点开列出这台电脑登录过的账号（点一个换过去）、添加账号、退出登录
+        Border AccountRow()
+        {
+            var chev = new IconView("chevron-down", 13, Th.Mute) { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 1, 0, 0) };
+            var row = Kit.InfoRow(Th, L.T("账号"), new StackPanel { Orientation = Orientation.Horizontal, Children = { account, chev } });
+            row.Background = Brushes.Transparent;   // 整行都能点
+            row.Cursor = Cursors.Hand;
+            row.MouseEnter += delegate { chev.Stroke = Th.Fg; };
+            row.MouseLeave += delegate { chev.Stroke = Th.Mute; };
+            row.MouseLeftButtonUp += delegate
+            {
+                if (accountPop != null && (accountPop.IsOpen || (DateTime.Now - accountClosed).TotalMilliseconds < 250)) { accountPop.IsOpen = false; return; }
+                ShowAccounts(row);
+            };
+            return row;
+        }
+
+        async void ShowAccounts(FrameworkElement anchor)
+        {
+            const double width = 340;
+            profiles = null;
+            accountError = switchingTo = null;
+            outArmed = false;
+            accountBody = new StackPanel();
+            var pop = accountPop = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = Ui.RightUnder(anchor, width), VerticalOffset = 4 };
+            pop.Closed += delegate { accountClosed = DateTime.Now; };
+            FillAccounts();
+            Kit.Pop(Th, pop, accountBody, width, 16, new Thickness(6), 14);
+            var list = await Task.Run(() => Account.Profiles());
+            if (pop != accountPop) return;
+            profiles = list ?? new List<Account.Profile>();
+            if (list == null) accountError = L.T("无法读取账号列表");
+            FillAccounts();
+        }
+
+        // 登录过的账号（当前的打勾，点别的换过去）、添加账号、退出登录（要再点一下才算）
+        void FillAccounts()
+        {
+            accountBody.Children.Clear();
+            if (profiles == null) accountBody.Children.Add(Note(L.T("正在读取…"), Th.Mute));
+            else foreach (var p in profiles) accountBody.Children.Add(ProfileRow(p));
+            if (profiles != null && profiles.Count > 0) accountBody.Children.Add(new Border { Height = 1, Background = Th.Hair, Margin = new Thickness(8, 4, 8, 4) });
+            bool none = profiles != null && profiles.Count == 0;
+            accountBody.Children.Add(MenuRow("plus", Account.Signing ? L.T("正在等待登录…") : none ? L.T("登录") : L.T("添加账号"), Th.Fg, AddAccount));
+            if (!none) accountBody.Children.Add(MenuRow("exit", outArmed ? L.T("确认退出登录") : L.T("退出登录"), Th.Bad, SignOut));
+            if (outArmed) accountBody.Children.Add(Note(L.T("这台电脑会离开 Tailscale 网络：文件分享、剪贴板互通和手机收听都会停，要重新登录才能回来。"), Th.Mute));
+            if (accountError != null) accountBody.Children.Add(Note(accountError, Th.Bad));
+        }
+
+        TextBlock Note(string text, Brush fg)
+        {
+            return new TextBlock { Text = text, FontSize = 13, LineHeight = 19, Foreground = fg, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 6, 12, 8) };
+        }
+
+        Border ProfileRow(Account.Profile p)
+        {
+            var who = Kit.Text(p.Login != "" ? p.Login : p.Tailnet, 14, Th.Fg);
+            // 个人账号的网络就叫那个邮箱：一样的不重复写
+            var note = Kit.Text(p.Id == switchingTo ? L.T("正在切换…") : p.Tailnet != p.Login ? p.Tailnet : "", 13, Th.Mute);
+            note.Margin = new Thickness(10, 0, 8, 0);
+            FrameworkElement mark = p.Selected ? (FrameworkElement)new IconView("check", 15, Th.Fg, 2.2) : new Border { Width = 15 };
+            return Choice(Ui.Columns(0, who, note, mark), () => { if (!p.Selected) SwitchTo(p); });
+        }
+
+        Border MenuRow(string icon, string text, Brush fg, Action click)
+        {
+            var g = new IconView(icon, 15, fg == Th.Bad ? Th.Bad : Th.Mute) { Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            return Choice(Ui.Columns(1, g, Kit.Text(text, 14, fg)), click);
+        }
+
+        Border Choice(UIElement child, Action click)
+        {
+            var row = new Border { Height = 40, Padding = new Thickness(12, 0, 10, 0), CornerRadius = new CornerRadius(9), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = child };
+            row.MouseEnter += delegate { row.Background = Th.Hair; };
+            row.MouseLeave += delegate { row.Background = Brushes.Transparent; };
+            row.MouseLeftButtonUp += delegate { click(); };
+            return row;
+        }
+
+        async void SwitchTo(Account.Profile p)
+        {
+            if (switchingTo != null) return;
+            switchingTo = p.Id;
+            accountError = null;
+            FillAccounts();
+            string why = await Task.Run(() => Account.Switch(p.Id));
+            var list = await Task.Run(() => Account.Profiles());
+            switchingTo = null;
+            accountError = why;
+            if (list != null) profiles = list;
+            if (accountPop.IsOpen) FillAccounts();
+            Load();
+        }
+
+        // 添加账号：去浏览器登录另一个账号，这台电脑换到它（没登录上就换回原来那个）。正在等登录时再点是重新打开那个网页
+        async void AddAccount()
+        {
+            bool none = profiles != null && profiles.Count == 0;
+            accountPop.IsOpen = false;
+            string why = await Account.SignIn(!none && !Account.Signing);
+            if (!string.IsNullOrEmpty(why)) Host.Notify(none ? L.T("登录失败") : L.T("添加账号失败"), why);
+            Load();
+        }
+
+        // 退出登录：第一下只是亮出后果，隔一会儿再点一下才退（双击带出来的第二下不算）
+        async void SignOut()
+        {
+            if (!outArmed) { outArmed = true; outAt = DateTime.Now; FillAccounts(); return; }
+            if ((DateTime.Now - outAt).TotalMilliseconds < 600) return;
+            accountPop.IsOpen = false;
+            string why = await Task.Run(() => Account.Logout());
+            if (why != null) Host.Notify(L.T("退出登录失败"), why);
+            Load();
         }
 
         // ---------- 改名 ----------

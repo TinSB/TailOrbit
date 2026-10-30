@@ -25,7 +25,9 @@ namespace TailOrbit
     }
 
     // 收件：订阅 Tailscale 的实时事件，里面的 IncomingFiles 就是正在收的文件。
-    // 事件里不说是谁发的：先看连到本机收件端口（PeerAPI）的是哪台设备，看不到再看这段时间谁发来的字节最多
+    // 事件里不说是谁发的：先看连到本机收件端口（PeerAPI）的是哪台设备，看不到再看这段时间谁发来的字节最多。
+    // Windows 上收到的文件先放在 Tailscale 自己的收件箱里（C:\ProgramData\Tailscale\files，用户打不开），由 Tailscale 的托盘程序取到“下载”；
+    // 它没开着时这边来取（tailscale file get）：一批收完取一次，程序启动时也取一次（没开着的时候收到的）
     static class Inbox
     {
         class Part
@@ -47,17 +49,21 @@ namespace TailOrbit
 
         public static event Action<Incoming> Changed;   // 在界面线程上触发
         static int count;
+        static Host host;
         static Dispatcher ui;
         static volatile int[] ports = new int[0];   // 本机的收件端口（IPv4、IPv6 各一个）
         static readonly Dictionary<string, long> rx = new Dictionary<string, long>();
         static Batch batch;
         static readonly DispatcherTimer tick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
 
-        public static void Start()
+        public static void Start(Host h)
         {
+            host = h;
             ui = Dispatcher.CurrentDispatcher;
             tick.Tick += delegate { Check(); };
             Listen();
+            // 开机时 Tailscale 的托盘程序和这边差不多一起起来：等它一会儿，还没开着再去取
+            Ui.After(20000, () => Collect(null, null));
         }
 
         static void Listen()
@@ -88,6 +94,8 @@ namespace TailOrbit
 
         static void Handle(JavaScriptSerializer js, string text)
         {
+            // 连上、断开、要登录了：状态马上读一遍，托盘菜单、设置页、星网不用等下一次定时刷新
+            if (text.IndexOf("\"State\"", StringComparison.Ordinal) >= 0) ui.BeginInvoke(new Action(Account.Refresh));
             bool files = text.IndexOf("\"IncomingFiles\"", StringComparison.Ordinal) >= 0;
             if (!files && text.IndexOf("\"LivePeers\"", StringComparison.Ordinal) < 0) return;
             Dictionary<string, object> o;
@@ -186,9 +194,51 @@ namespace TailOrbit
             if (got.Count == 0) { Raise(s); return; }
             // Windows 上收到的文件最后放在“下载”里
             string dl = Folders.Downloads();
-            s.Files = got.Select(p => p.Final != null && p.Final.StartsWith(dl, StringComparison.OrdinalIgnoreCase) ? p.Final : System.IO.Path.Combine(dl, p.Name)).ToList();
-            Raise(s);
-            History.RecordIn(b.From, s.Files, got.Sum(p => p.Got));
+            var guess = got.Select(p => p.Final != null && p.Final.StartsWith(dl, StringComparison.OrdinalIgnoreCase) ? p.Final : System.IO.Path.Combine(dl, p.Name)).ToList();
+            Collect(b.From, () =>
+            {
+                s.Files = guess;
+                Raise(s);
+                History.RecordIn(b.From, s.Files, got.Sum(p => p.Got));
+            }, s);
+        }
+
+        // Tailscale 的托盘程序开着：它会取，这边只记一笔（done）。没开着：这边取到“下载”，按真正放下的名字记、弹一条通知；
+        // 什么都没取到也照常 done（多半是它刚好也在取，或者文件还没收完）
+        static void Collect(Device from, Action done, Incoming s = null)
+        {
+            if (Account.IpnOpen() || Account.Now.Backend != "Running") { if (done != null) done(); return; }
+            string dl = Folders.Downloads();
+            Task.Run(() => Fetch(dl)).ContinueWith(t =>
+            {
+                var moved = t.IsFaulted ? new List<string>() : t.Result;
+                if (t.IsFaulted) Log.Write(t.Exception.GetBaseException());
+                if (moved.Count == 0) { if (done != null) done(); return; }
+                if (s != null) { s.Files = moved; Raise(s); }
+                long bytes = moved.Sum(p => { try { return new FileInfo(p).Length; } catch (IOException) { return 0L; } });
+                History.RecordIn(from, moved, bytes);
+                string first = moved[0];
+                host.Notify(from != null ? L.T("收到来自 {0} 的文件", from.Name) : L.T("收到了文件"), L.T("已放进“下载”：{0}", Ui.Describe(moved)), true,
+                    () => Ui.Launch(() => Process.Start("explorer.exe", "/select,\"" + first + "\"")));
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        // 把收件箱里收完的文件都取到 dir（tailscale file get）：重名的另起一个带编号的名字（a (1).txt），不覆盖、不丢。
+        // 返回放下的文件（按 --verbose 打出来的“wrote a.txt as …\a (1).txt (12 bytes)”）；取不出来的留在收件箱里，下次再取
+        public static List<string> Fetch(string dir)
+        {
+            string arg = dir.EndsWith("\\") ? dir + "\\" : dir;   // 放在盘根上的“下载”：结尾的 \ 得双写，不然把后面的引号转义了
+            var moved = new List<string>();
+            CmdResult r;
+            try { r = Tailscale.Run("file get --conflict=rename --verbose \"" + arg + "\"", 10 * 60 * 1000); }
+            catch (Win32Exception) { return moved; }   // 刚好在更新、卸载 Tailscale
+            foreach (var line in (r.Out + "\n" + r.Err).Split('\n').Select(l => l.TrimEnd('\r')))
+            {
+                int at = line.IndexOf(" as " + dir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase), end = line.LastIndexOf(" (", StringComparison.Ordinal);
+                if (line.StartsWith("wrote ") && at > 0 && end > at) moved.Add(line.Substring(at + 4, end - at - 4));
+            }
+            if (r.Code != 0) Log.Write(new IOException("tailscale file get: " + Tailscale.FirstLine(r.Err, "exit " + r.Code)));
+            return moved;
         }
 
         static Incoming State(Batch b)
@@ -307,12 +357,12 @@ namespace TailOrbit
     }
 
     // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、深浅色、剪贴板互通、和 Mac 共用剪贴板、在手机上收听本机声音、自动下载更新、
-    // 在不信任的网络上自动使用的出口节点和信任的网络、连接变差时提醒
+    // 在不信任的网络上自动使用的出口节点和信任的网络、连接变差时提醒、哪天提醒过密钥快到期
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
         static readonly HashSet<string> watch = new HashSet<string>(), trusted = new HashSet<string>();
-        static string language = "auto", theme = "auto", clipKey = "", autoExitNode = "", autoExitActive = "";
+        static string language = "auto", theme = "auto", clipKey = "", autoExitNode = "", autoExitActive = "", keyNotice = "";
         static bool clipOn, syncMac, autoUpdate, soundOn, netAlerts = true;
 
         static Settings()
@@ -333,6 +383,7 @@ namespace TailOrbit
                 netAlerts = !false.Equals(Tailscale.Get(o, "netAlerts"));
                 autoExitNode = (Tailscale.Get(o, "autoExitNode") as string) ?? "";
                 autoExitActive = (Tailscale.Get(o, "autoExitActive") as string) ?? "";
+                keyNotice = (Tailscale.Get(o, "keyNotice") as string) ?? "";
                 var nets = Tailscale.Get(o, "trustedNets") as object[];
                 if (nets != null) foreach (var s in nets.OfType<string>()) trusted.Add(s);
             }
@@ -417,6 +468,13 @@ namespace TailOrbit
             set { autoExitActive = value; Save(); }
         }
 
+        // 哪天提醒过本机密钥快到期（yyyy-MM-dd）：一天只提醒一次，重启程序也算
+        public static string KeyNotice
+        {
+            get { return keyNotice; }
+            set { keyNotice = value; Save(); }
+        }
+
         // 信任的网络：Windows 给每个网络的编号
         public static IEnumerable<string> TrustedNets { get { return trusted; } }
         public static bool Trusted(string net) { return trusted.Contains(net); }
@@ -453,7 +511,7 @@ namespace TailOrbit
                 var o = new Dictionary<string, object>
                 {
                     { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac }, { "sound", soundOn }, { "netAlerts", netAlerts },
-                    { "autoExitNode", autoExitNode }, { "autoExitActive", autoExitActive }, { "trustedNets", trusted.ToList() }
+                    { "autoExitNode", autoExitNode }, { "autoExitActive", autoExitActive }, { "trustedNets", trusted.ToList() }, { "keyNotice", keyNotice }
                 };
                 File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));
                 if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
