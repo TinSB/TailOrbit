@@ -341,12 +341,13 @@ for (;;) {
             Task.Run(() => Push());
         }
 
-        // 本机剪贴板里能传的：先看文字（Excel 复制表格时文字、图片都有，要的是文字），没有文字再看图片。在界面线程上调
+        // 本机剪贴板里能传的：先看文字（Excel 复制表格时文字、图片都有，要的是文字），没有文字再看图片。在界面线程上调。
+        // Tailscale 的访问令牌不传：连管理接口、开通云盘时 TailOrbit 自己从剪贴板拿走，不该先被同步到 Mac、推到手机上
         public static ClipItem Read()
         {
             bool secret;
             string text = ClipShare.Peek(out secret);
-            if (!string.IsNullOrEmpty(text)) return text.Length > MaxChars ? null : ClipItem.OfText(text, secret);
+            if (!string.IsNullOrEmpty(text)) return text.Length > MaxChars || Api.Token.IsMatch(text) ? null : ClipItem.OfText(text, secret);
             byte[] png = Png();
             return png == null ? null : ClipItem.OfPng(png, ClipShare.Secret());
         }

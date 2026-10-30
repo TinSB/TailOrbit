@@ -1146,6 +1146,7 @@ namespace TailOrbit
             Outbox.Start(this);
             Updates.Start(this);
             AutoExit.Start(this);
+            NetLog.Start(this);
             if (showMain) ShowMain();
             // 开屏动画放完、手头没事了再预编译；编完顺手把快捷面板的窗口句柄建好、备好托盘菜单、把主界面建好并读一遍设备，
             // 第一次按 Ctrl+Alt+A、第一次右键托盘、第一次点开主界面都少等一截

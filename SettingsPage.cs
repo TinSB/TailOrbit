@@ -1,11 +1,13 @@
-// 设置页：左边是这台电脑在 Tailscale 里叫什么、地址、账号和 Tailscale 版本（有新版本时一键更新）；右边一节一节往下排：出口节点（可以在不信任的网络上自动使用）、
-// Tailscale 的常用开关（tailscale set）、外观（跟随系统 / 浅色 / 深色）、常规（开机自启、界面语言）、剪贴板（剪贴板互通、和 Mac 共用剪贴板）、声音（在手机上收听），
-// 最后是 TailOrbit 自己的版本和更新（检查更新、自动下载更新）。右边放不下，用滚轮往下翻
+// 设置页：左边是这台电脑在 Tailscale 里叫什么（点一下改名）、地址、账号和 Tailscale 版本（有新版本时一键更新）；右边一节一节往下排：出口节点（标出推荐的那台，可以在不信任的网络上自动使用）、
+// Tailscale 的常用开关（tailscale set）、共享本机所在的局域网、管理接口（连上以后网络页能直接批准、删设备、关密钥到期）、外观（跟随系统 / 浅色 / 深色）、
+// 常规（开机自启、界面语言、连接变差时提醒）、剪贴板（剪贴板互通、和 Mac 共用剪贴板）、声音（在手机上收听），最后是 TailOrbit 自己的版本和更新（检查更新、自动下载更新）。右边放不下，用滚轮往下翻
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +16,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace TailOrbit
 {
@@ -31,6 +34,8 @@ namespace TailOrbit
         };
         static readonly string[] Looks = { "auto", "light", "dark" };
         static readonly string[] LookNames = { "跟随系统", "浅色", "深色" };
+        // 家用路由器最常用的几个网段：别处的局域网也多半是它，共享出去容易撞
+        static readonly string[] Common = { "192.168.0.0/24", "192.168.1.0/24", "192.168.2.0/24", "192.168.31.0/24", "10.0.0.0/24", "10.0.1.0/24" };
         // 外观小样和程序图标同一套颜色（底、轨道、圆点），各有浅色、深色一份
         static readonly Color[] Paper = { Color.FromRgb(0xE6, 0xE8, 0xEB), Color.FromRgb(0x1A, 0x1C, 0x1F) };
         static readonly Color[] Orbit = { Color.FromRgb(0x80, 0x86, 0x8E), Color.FromRgb(0x8C, 0x92, 0x9A) };
@@ -40,12 +45,13 @@ namespace TailOrbit
         class Data
         {
             public Dictionary<string, object> Prefs, Status;
-            public string Error;
+            public string Error, Suggest = "", Subnet = "";   // Suggest：Tailscale 推荐的出口节点（短名字）；Subnet：本机所在的局域网网段
         }
 
         readonly Ellipse shieldRing = new Ellipse { Width = 140, Height = 140, StrokeThickness = 2, Opacity = 0 };
         readonly ScaleTransform badgeScale = new ScaleTransform(0, 0);
-        readonly TextBlock name, dns, ip, account, tsVersion, tsNote, version, note;
+        readonly TextBlock name, dns, ip, account, tsVersion, tsNote, version, note, renameNote;
+        readonly TextBox nameBox;
         readonly StackPanel exits = new StackPanel { Margin = new Thickness(0, 14, 0, 30) };
         readonly Dictionary<string, Toggle> toggles = new Dictionary<string, Toggle>();
         readonly Border[] lookTiles = new Border[3];
@@ -56,8 +62,18 @@ namespace TailOrbit
         string current = "", ver = "", upstream;
         bool stepsOpen;
         int loads;
-        Popup autoPop, qrPop, langs;                   // 自动使用哪一台的列表、剪贴板或声音的二维码、语言列表
-        DateTime autoClosed, qrClosed, langsClosed;   // 和它们上次收起的时间
+        Popup autoPop, qrPop, langs, adminPop;                     // 自动使用哪一台的列表、剪贴板或声音的二维码、语言列表、管理接口
+        DateTime autoClosed, qrClosed, langsClosed, adminClosed;   // 和它们上次收起的时间
+        string selfId = "", suggested = "", lanNet = "", lanError, adminError;   // lanNet：共享着的网段，没共享时是本机所在的局域网
+        List<string> selfRoutes = new List<string>();   // 后台批准了本机共享的哪些网段
+        Toggle lanToggle;
+        Border lanRow;
+        TextBlock lanNote, adminNote;
+        StackPanel adminBody;
+        bool lanBusy, connecting, renaming, warned;
+        readonly DispatcherTimer clip = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+        readonly HashSet<string> stale = new HashSet<string>();   // 打开连接框之前剪贴板里就有的令牌、连不上的令牌：不自动拿
+        DateTime watchUntil;   // 点“打开”去生成令牌后的 10 分钟：切去浏览器时连接框会自己收起，收起了也接着看剪贴板
 
         public SettingsPage(Host host) : base(host)
         {
@@ -79,14 +95,29 @@ namespace TailOrbit
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 6, 8),
                 Child = new IconView("lock", 15, Th.Ink, 2.2), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = badgeScale, ToolTip = Ui.Tip(Th, L.T("已阻止所有传入连接"))
             });
-            name = new TextBlock { FontFamily = Ui.DisplayFont, FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 16, 0, 20), TextTrimming = TextTrimming.CharacterEllipsis };
+            name = new TextBlock { FontFamily = Ui.DisplayFont, FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 16, 0, 20), TextTrimming = TextTrimming.CharacterEllipsis, Cursor = Cursors.IBeam, ToolTip = Ui.Tip(Th, L.T("点击修改名称")) };
+            // 改名：点名字变成输入框，Enter 确定、Esc 取消
+            nameBox = new TextBox
+            {
+                FontFamily = Ui.DisplayFont, FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, CaretBrush = Th.Fg, Background = Brushes.Transparent, BorderBrush = Th.Rim, BorderThickness = new Thickness(0, 0, 0, 1.5),
+                HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new Thickness(0), Margin = new Thickness(20, 13, 20, 17), Visibility = Visibility.Collapsed, RenderTransform = new TranslateTransform()
+            };
+            renameNote = new TextBlock { FontSize = 12.5, LineHeight = 18, Foreground = Th.Mute, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, -10, 0, 16), Visibility = Visibility.Collapsed };
+            name.MouseLeftButtonUp += delegate { StartRename(); };
+            nameBox.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter) Rename();
+                else if (e.Key == Key.Escape) EndRename(true);
+            };
+            nameBox.LostKeyboardFocus += delegate { if (!renaming) EndRename(false); };
             dns = Kit.Mono("", 13, Th.Fg);
             ip = Kit.Mono("", 13, Th.Fg);
             account = Kit.Text("", 14, Th.Fg);
             tsVersion = Kit.Text("", 14, Th.Fg);
             var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             left.Children.Add(disc);
-            left.Children.Add(name);
+            left.Children.Add(new Grid { Children = { name, nameBox } });
+            left.Children.Add(renameNote);
             var dnsRow = Kit.CopyRow(Th, dns);
             dnsRow.Margin = new Thickness(0, 0, 0, 8);
             left.Children.Add(dnsRow);
@@ -113,14 +144,14 @@ namespace TailOrbit
             right.Children.Add(head);
             right.Children.Add(exits);
             right.Children.Add(Kit.Title(Th, "Tailscale"));
-            right.Children.Add(Spaced(Kit.Group(Th, Switches.Select(x => SwitchRow(x[0], L.T(x[1]))).ToArray()), 30));
+            right.Children.Add(Spaced(Kit.Group(Th, Switches.Select(x => SwitchRow(x[0], L.T(x[1]))).Concat(new[] { LanRow(), AdminRow() }).ToArray()), 30));
             right.Children.Add(Kit.Title(Th, L.T("外观")));
             var looks = new UniformGrid { Columns = 3, Margin = new Thickness(-4, 14, -4, 30) };
             for (int i = 0; i < Looks.Length; i++) looks.Children.Add(LookTile(i));
             PaintLooks(Array.IndexOf(Looks, Settings.Theme));
             right.Children.Add(looks);
             right.Children.Add(Kit.Title(Th, L.T("常规")));
-            right.Children.Add(Spaced(Kit.Group(Th, AutostartRow(), LanguageRow()), 30));
+            right.Children.Add(Spaced(Kit.Group(Th, AutostartRow(), LanguageRow(), AlertsRow()), 30));
             right.Children.Add(Kit.Title(Th, L.T("剪贴板")));
             right.Children.Add(Spaced(Kit.Group(Th, QrRow(L.T("剪贴板互通"), () => Settings.ClipOn, ClipShare.Turn, () => ClipShare.Url), SyncRow()), 30));
             right.Children.Add(Kit.Title(Th, L.T("声音")));
@@ -142,7 +173,7 @@ namespace TailOrbit
             right.Margin = new Thickness(10, 0, 10, 36);
             var scroll = new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false, Margin = new Thickness(-10, 0, -10, -36) };
             scroll.ScrollToVerticalOffset(scrolled);   // 排好版后才生效
-            scroll.ScrollChanged += delegate { scrolled = scroll.VerticalOffset; FadeEdges(scroll); };
+            scroll.ScrollChanged += delegate { scrolled = scroll.VerticalOffset; Kit.FadeEdges(scroll); };
             Grid.SetColumn(scroll, 2);
             grid.Children.Add(scroll);
             Children.Add(grid);
@@ -151,21 +182,8 @@ namespace TailOrbit
             // 换了网络、自动开关过出口节点：看着这一页时跟着刷新；更新走到哪一步也跟着变
             Action changed = () => { if (IsVisible) Load(); };
             Loaded += delegate { AutoExit.Changed += changed; Updates.Changed += ShowUpdate; ShowUpdate(); };
-            Unloaded += delegate { AutoExit.Changed -= changed; Updates.Changed -= ShowUpdate; };
-        }
-
-        // 上边、下边还有内容藏着的那一边淡出一截，不是一刀切
-        static void FadeEdges(ScrollViewer sv)
-        {
-            bool above = sv.VerticalOffset > 0.5, below = sv.VerticalOffset < sv.ScrollableHeight - 0.5;
-            if (!above && !below) { sv.OpacityMask = null; return; }
-            double edge = Math.Min(0.25, 32 / Math.Max(sv.ActualHeight, 1));
-            var mask = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
-            mask.GradientStops.Add(new GradientStop(above ? Colors.Transparent : Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, edge));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 1 - edge));
-            mask.GradientStops.Add(new GradientStop(below ? Colors.Transparent : Colors.Black, 1));
-            sv.OpacityMask = mask;
+            Unloaded += delegate { AutoExit.Changed -= changed; Updates.Changed -= ShowUpdate; clip.Stop(); };
+            clip.Tick += delegate { PeekClipboard(); };
         }
 
         // 一组设置和上下的空
@@ -201,6 +219,11 @@ namespace TailOrbit
             d.Prefs = Tailscale.Json(g.Out);
             var s = Tailscale.Run("status --json");
             if (s.Code == 0) d.Status = Tailscale.Json(s.Out);
+            // 推荐的出口节点：Suggested exit node: 名字.网络.ts.net.（没有推荐时是另一句，老版本没有这个命令）
+            var x = Tailscale.Run("exit-node suggest");
+            var line = x.Code == 0 ? x.Out.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("Suggested exit node:")) : null;
+            if (line != null) d.Suggest = line.Substring(20).Trim().TrimEnd('.').Split('.')[0];
+            d.Subnet = AutoExit.Subnet();
             return d;
         }
 
@@ -227,6 +250,13 @@ namespace TailOrbit
             account.Text = (Tailscale.Get(me, "LoginName") as string) ?? "";
             ver = ((Tailscale.Get(d.Status, "Version") as string) ?? "").Split('-')[0];
             ShowVersion();
+            selfId = (Tailscale.Get(self, "ID") as string) ?? "";
+            selfRoutes = ((Tailscale.Get(self, "AllowedIPs") as object[]) ?? new object[0]).Concat((Tailscale.Get(self, "PrimaryRoutes") as object[]) ?? new object[0]).OfType<string>().ToList();
+            suggested = d.Suggest;
+            string routes = (Tailscale.Get(prefs, "advertise-routes") as string) ?? "";
+            lanNet = routes != "" ? routes : d.Subnet;
+            if (!lanBusy) ShowLan(routes != "", true);
+            ShowAdminNote();
 
             // 出口节点：所有声明了能当出口、后台也批准了的设备
             options = AutoExit.Exits(d.Status);
@@ -278,7 +308,7 @@ namespace TailOrbit
             foreach (var x in options)
             {
                 var e = x;
-                string note = !e.Online ? L.T("离线") : e.Ip == current && e.Ip == Settings.AutoExitActive ? L.T("自动") : "";
+                string note = !e.Online ? L.T("离线") : e.Ip == current && e.Ip == Settings.AutoExitActive ? L.T("自动") : e.Name.Equals(suggested, StringComparison.OrdinalIgnoreCase) ? L.T("推荐") : "";
                 exits.Children.Add(Radio(e.Name, note, current == e.Ip, e.Online, () => PickExit(e.Ip)));
             }
             if (options.Count == 0) RenderEmpty();
@@ -393,13 +423,17 @@ namespace TailOrbit
             Load();
         }
 
+        // 一步：序号、一句话（放不下换行）、右边可选一个按钮
         FrameworkElement Step(int n, string text, FrameworkElement end)
         {
             var num = new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = Th.Fill, Child = new TextBlock { Text = n.ToString(), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
             var t = Kit.Text(text, 14, Th.Fg);
-            t.Margin = new Thickness(12, 0, 12, 0);
+            t.Margin = new Thickness(12, 6, 12, 6);
+            t.TextWrapping = TextWrapping.Wrap;
+            t.TextTrimming = TextTrimming.None;
+            t.LineHeight = 20;
             var row = end == null ? Ui.Columns(1, num, t) : Ui.Columns(1, num, t, end);
-            row.Height = 46;
+            row.MinHeight = 46;
             return row;
         }
 
@@ -454,6 +488,280 @@ namespace TailOrbit
         {
             Ui.AnimTo(shieldRing, OpacityProperty, on ? 1 : 0, animate ? 250 : 1);
             Ui.ScaleTo(badgeScale, on ? 1 : 0, animate ? 380 : 1, on ? Ui.Spring : Ui.Ease);
+        }
+
+        // ---------- 共享局域网 ----------
+
+        // 让其他设备经本机访问本机所在的局域网（tailscale set --advertise-routes=网段）。右边写网段，后台还没批准时跟一句“等待批准”；
+        // 连着管理接口的打开时顺手批准。常见网段悬停时提醒可能和别处的局域网撞
+        Border LanRow()
+        {
+            lanToggle = new Toggle(Th, false);
+            lanNote = Kit.Text("", 14, Th.Mute);
+            lanNote.MaxWidth = 220;
+            lanNote.Margin = new Thickness(0, 0, 12, 0);
+            lanRow = Kit.Row(Th, L.T("允许其他设备通过本机访问局域网"), new StackPanel { Orientation = Orientation.Horizontal, Children = { lanNote, lanToggle } });
+            lanRow.MouseLeftButtonUp += delegate { FlipLan(); };
+            return lanRow;
+        }
+
+        void ShowLan(bool on, bool animate)
+        {
+            lanToggle.Set(on, animate);
+            bool waiting = on && lanNet.Split(',').Any(n => !selfRoutes.Contains(n.Trim()));
+            lanNote.Text = lanNet == "" ? L.T("未找到局域网") : lanNet + (waiting ? " · " + L.T("等待批准") : "");
+            lanRow.ToolTip = lanError != null ? Ui.Tip(Th, lanError) : Common.Contains(lanNet) ? Ui.Tip(Th, L.T("这个网段很常见：如果其他设备自己所在的局域网也是它，访问时会冲突。")) : null;
+        }
+
+        // 只改共享的网段；出口节点照它现在的样子一起传，不让它被顺带改掉
+        async void FlipLan()
+        {
+            if (lanBusy || lanNet == "") return;
+            lanBusy = true;
+            bool want = !lanToggle.On, exit = toggles["advertise-exit-node"].On;
+            string net = lanNet;
+            lanToggle.Set(want, true);
+            string failed;
+            try
+            {
+                var r = await Task.Run(() => Tailscale.Run("set --advertise-routes=" + (want ? net : "") + " --advertise-exit-node=" + (exit ? "true" : "false")));
+                failed = r.Code != 0 ? Tailscale.FirstLine(r.Err, L.T("更改失败")) : null;
+            }
+            catch (Win32Exception) { failed = L.T("更改失败"); }   // 刚好在更新、卸载 Tailscale：开关别卡住
+            lanError = failed;
+            if (failed == null && want && Admin.Connected) lanError = await Task.Run(() => Admin.Approve(selfId, net.Split(',')));
+            lanBusy = false;
+            if (failed != null) lanToggle.Set(!want, true);
+            if (lanError != null) Ui.Shake((TranslateTransform)lanRow.RenderTransform);
+            ShowLan(lanToggle.On, true);
+            Load();
+        }
+
+        // ---------- 管理接口 ----------
+
+        // 右边写连没连、还有几天到期；点开弹出连接（生成令牌、复制，程序自动拿走）或断开
+        Border AdminRow()
+        {
+            adminNote = Kit.Text("", 14, Th.Mute);
+            var chev = new IconView("chevron-down", 14, Th.Mute) { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 1, 0, 0) };
+            var row = Kit.Row(Th, L.T("管理接口"), new StackPanel { Orientation = Orientation.Horizontal, Children = { adminNote, chev } });
+            row.MouseEnter += delegate { chev.Stroke = Th.Fg; };
+            row.MouseLeave += delegate { chev.Stroke = Th.Mute; };
+            row.MouseLeftButtonUp += delegate
+            {
+                // 开着时再点这一行是想收起：按下那一下已经把它关了，别马上又开一个
+                if (adminPop != null && (adminPop.IsOpen || (DateTime.Now - adminClosed).TotalMilliseconds < 250)) { adminPop.IsOpen = false; return; }
+                ShowAdmin(row);
+            };
+            ShowAdminNote();
+            return row;
+        }
+
+        void ShowAdminNote()
+        {
+            var at = Admin.Expires;
+            adminNote.Text = Admin.Expired ? L.T("令牌已过期") : !Admin.Connected ? L.T("未连接") : at == null ? L.T("已连接")
+                : L.T("已连接 · {0} 天后到期", Math.Max(0, (int)Math.Floor((at.Value - DateTime.UtcNow).TotalDays)));
+        }
+
+        void ShowAdmin(FrameworkElement anchor)
+        {
+            const double width = 380;
+            adminError = null;
+            adminBody = new StackPanel();
+            adminPop = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = Ui.RightUnder(anchor, width), VerticalOffset = 4 };
+            adminPop.Closed += delegate { adminClosed = DateTime.Now; if (DateTime.Now > watchUntil) clip.Stop(); };
+            FillAdmin();
+            Kit.Pop(Th, adminPop, adminBody, width, 16, new Thickness(20, 18, 20, 18), 16);
+            if (Admin.Connected) return;
+            // 剪贴板里原来就有的令牌是别处用的：不自动拿
+            try
+            {
+                var old = Api.Token.Match(Clipboard.ContainsText() ? Clipboard.GetText() : "");
+                if (old.Success) stale.Add(old.Value);
+            }
+            catch (COMException) { }
+            clip.Start();
+        }
+
+        // 连着：到期时间和断开；没连：三步（打开密钥页、复制、回来自动连上），也能粘贴进框里
+        void FillAdmin()
+        {
+            adminBody.Children.Clear();
+            var title = new TextBlock { FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, Margin = new Thickness(0, 0, 0, 6) };
+            adminBody.Children.Add(title);
+            if (Admin.Connected)
+            {
+                title.Text = L.T("已连接管理接口");
+                adminBody.Children.Add(Para(L.T("网络页可以直接批准本机共享的出口节点和局域网、删除离线设备、关闭密钥到期；修改本机名称也会改管理控制台里的名称。")));
+                var at = Admin.Expires;
+                if (at != null) adminBody.Children.Add(Kit.InfoRow(Th, L.T("令牌到期"), Kit.Text(Ui.When(at.Value.ToLocalTime()), 14, Th.Fg)));
+                var off = Kit.Danger(Th, L.T("断开"), () =>
+                {
+                    Admin.Disconnect();
+                    ShowAdminNote();
+                    adminPop.IsOpen = false;
+                });
+                off.Margin = new Thickness(0, 14, 0, 0);
+                adminBody.Children.Add(off);
+                adminBody.Children.Add(Para(L.T("断开后，请在管理控制台的“Keys”页面中撤销这个令牌。")));
+                return;
+            }
+            title.Text = L.T("连接管理接口");
+            adminBody.Children.Add(Para(L.T("连接后，网络页可以直接批准路由、删除离线设备、关闭密钥到期，也能修改本机在管理控制台里的名称。")));
+            var steps = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var open = Kit.Button(Th, L.T("打开"), false, () => { watchUntil = DateTime.Now.AddMinutes(10); OpenUrl(Api.KeysPage); });
+            open.Height = 34;
+            steps.Children.Add(Step(1, L.T("在打开的网页中点击“Generate access token”"), connecting ? null : open));
+            steps.Children.Add(Step(2, L.T("点击“Copy”复制生成的令牌"), null));
+            steps.Children.Add(Step(3, connecting ? L.T("正在连接…") : L.T("返回此处，将自动连接"), null));
+            adminBody.Children.Add(steps);
+            if (!connecting) adminBody.Children.Add(PasteBox());
+            adminBody.Children.Add(Para(L.T("令牌加密保存在本机，只发送给 Tailscale。")));
+            if (adminError != null) adminBody.Children.Add(new TextBlock { Text = adminError, FontSize = 13, LineHeight = 19, Foreground = Th.Bad, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) });
+        }
+
+        TextBlock Para(string text)
+        {
+            return new TextBlock { Text = text, FontSize = 13, LineHeight = 19, Foreground = Th.Mute, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
+        }
+
+        // 剪贴板读不到时（比如别的程序占着）也能手动粘贴
+        FrameworkElement PasteBox()
+        {
+            var box = new TextBox { FontFamily = Ui.MonoFont, FontSize = 13, Foreground = Th.Fg, CaretBrush = Th.Fg, Background = Brushes.Transparent, BorderThickness = new Thickness(0), VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(0) };
+            var hint = new TextBlock { Text = L.T("或粘贴到此处"), FontSize = 13, Foreground = Th.Dim, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            box.TextChanged += delegate
+            {
+                hint.Visibility = box.Text == "" ? Visibility.Visible : Visibility.Collapsed;
+                var m = Api.Token.Match(box.Text);
+                if (m.Success) GotToken(m.Value);
+            };
+            return new Border { Height = 42, Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(12), Background = Th.Bg, Child = new Grid { Children = { hint, box } } };
+        }
+
+        // 每 0.6 秒看一眼剪贴板（只认 tskey-api- 开头的，别的不看不存）
+        void PeekClipboard()
+        {
+            if (connecting || Admin.Connected || adminPop == null || (!adminPop.IsOpen && DateTime.Now > watchUntil)) { clip.Stop(); return; }
+            string text;
+            try { text = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+            catch (COMException) { return; }   // 别的程序正开着剪贴板：下次再看
+            var m = Api.Token.Match(text);
+            if (m.Success && !stale.Contains(m.Value)) GotToken(m.Value);
+        }
+
+        async void GotToken(string token)
+        {
+            if (connecting) return;
+            connecting = true;
+            clip.Stop();
+            // 拿到就从剪贴板里清掉（不管是读到的还是粘贴进框里的），令牌不留在外面
+            try { if (Clipboard.ContainsText() && Clipboard.GetText().Contains(token)) Clipboard.Clear(); }
+            catch (COMException) { }
+            adminError = null;
+            FillAdmin();
+            string why;
+            try { why = await Task.Run(() => Admin.Connect(token)); }
+            catch (Exception e) { why = e.Message; }   // 存不下令牌这类没想到的错：也要回到能重来的状态，不能卡在“正在连接”
+            connecting = false;
+            adminError = why;
+            ShowAdminNote();
+            // 连接框已经收起了（还在浏览器里时从剪贴板拿到的）：结果用通知告诉
+            if (why == null)
+            {
+                watchUntil = DateTime.MinValue;
+                if (adminPop.IsOpen) adminPop.IsOpen = false;
+                else Host.Notify(L.T("已连接管理接口"), L.T("网络页可以直接批准本机共享的出口节点和局域网、删除离线设备、关闭密钥到期；修改本机名称也会改管理控制台里的名称。"));
+                Load();
+                return;
+            }
+            stale.Add(token);   // 连不上的这把别再自动拿
+            FillAdmin();
+            if (!adminPop.IsOpen) Host.Notify(L.T("连接管理接口"), why);
+            if (adminPop.IsOpen || DateTime.Now < watchUntil) clip.Start();
+        }
+
+        // ---------- 改名 ----------
+
+        void StartRename()
+        {
+            if (selfId == "" || renaming) return;   // 还没读到本机
+            warned = false;
+            renameNote.Visibility = Visibility.Collapsed;
+            nameBox.Text = name.Text;
+            name.Visibility = Visibility.Hidden;
+            nameBox.Visibility = Visibility.Visible;
+            nameBox.Focus();
+            nameBox.SelectAll();
+        }
+
+        void EndRename(bool clear)
+        {
+            nameBox.Visibility = Visibility.Collapsed;
+            name.Visibility = Visibility.Visible;
+            if (clear) renameNote.Visibility = Visibility.Collapsed;
+        }
+
+        void RenameNote(string text, bool bad)
+        {
+            renameNote.Text = text;
+            renameNote.Foreground = bad ? Th.Bad : Th.Mute;
+            renameNote.Visibility = Visibility.Visible;
+        }
+
+        // 连着管理接口改后台的名字；没连改本机的主机名（后台没改过名的设备，名字跟着主机名走）。开着剪贴板、收听时先提醒网址会变
+        async void Rename()
+        {
+            string want = nameBox.Text.Trim();
+            if (want == "" || want == name.Text) { EndRename(true); return; }
+            if (!Regex.IsMatch(want, "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"))
+            {
+                RenameNote(L.T("名称只能包含字母、数字和连字符，且不能以连字符开头或结尾。"), true);
+                Ui.Shake((TranslateTransform)nameBox.RenderTransform);
+                return;
+            }
+            if ((Settings.ClipOn || Settings.SoundOn) && !warned)
+            {
+                warned = true;
+                RenameNote(L.T("改名后，手机上存的网址和 iPhone App 里的网址都要换成新的。再按一次 Enter 确认。"), false);
+                return;
+            }
+            renaming = true;
+            nameBox.IsEnabled = false;
+            string why = null;
+            bool admin = Admin.Connected;
+            try
+            {
+                if (admin) why = await Task.Run(() => Admin.Rename(selfId, want.ToLowerInvariant()));
+                else
+                {
+                    var r = await Task.Run(() => Tailscale.Run("set --hostname=" + want));
+                    if (r.Code != 0) why = Tailscale.FirstLine(r.Err, L.T("更改失败"));
+                }
+            }
+            catch (Win32Exception) { why = L.T("更改失败"); }   // 刚好在更新、卸载 Tailscale：输入框别卡住
+            nameBox.IsEnabled = true;
+            if (why != null)
+            {
+                renaming = false;
+                RenameNote(why, true);
+                Ui.Shake((TranslateTransform)nameBox.RenderTransform);
+                nameBox.Focus();
+                return;
+            }
+            EndRename(true);
+            // 后台把新名字推回本机要一两秒：等它出现；改了主机名名字却一直没变，是在管理控制台里改过名（不再跟着主机名走）
+            string before = name.Text;
+            for (int i = 0; i < 8; i++)
+            {
+                await Task.Delay(1000);
+                var d = await Task.Run(() => Fetch());
+                Apply(d);
+                if (name.Text != before) break;
+            }
+            renaming = false;
+            if (name.Text == before && !admin) RenameNote(L.T("名称没有变化：这台设备在管理控制台中改过名，需要在那里修改，或先连接管理接口。"), true);
         }
 
         // ---------- TailOrbit 的更新 ----------
@@ -545,7 +853,20 @@ namespace TailOrbit
             return b;
         }
 
-        // ---------- 常规：开机自启、语言 ----------
+        // ---------- 常规：开机自启、语言、连接变差时提醒 ----------
+
+        Border AlertsRow()
+        {
+            var t = new Toggle(Th, Settings.NetAlerts);
+            var row = Kit.Row(Th, L.T("连接变差时提醒"), t);
+            row.ToolTip = Ui.Tip(Th, L.T("正在通信的设备改走中继、或延迟比平时高出很多时发通知。"));
+            row.MouseLeftButtonUp += delegate
+            {
+                t.Set(!t.On, true);
+                Settings.NetAlerts = t.On;
+            };
+            return row;
+        }
 
         Border AutostartRow()
         {

@@ -307,13 +307,13 @@ namespace TailOrbit
     }
 
     // 本程序自己的设置：%LOCALAPPDATA%\TailOrbit\settings.json。要掉线提醒的设备、界面语言、深浅色、剪贴板互通、和 Mac 共用剪贴板、在手机上收听本机声音、自动下载更新、
-    // 在不信任的网络上自动使用的出口节点和信任的网络
+    // 在不信任的网络上自动使用的出口节点和信任的网络、连接变差时提醒
     static class Settings
     {
         static readonly string FilePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailOrbit", "settings.json");
         static readonly HashSet<string> watch = new HashSet<string>(), trusted = new HashSet<string>();
         static string language = "auto", theme = "auto", clipKey = "", autoExitNode = "", autoExitActive = "";
-        static bool clipOn, syncMac, autoUpdate, soundOn;
+        static bool clipOn, syncMac, autoUpdate, soundOn, netAlerts = true;
 
         static Settings()
         {
@@ -330,6 +330,7 @@ namespace TailOrbit
                 clipKey = (Tailscale.Get(o, "clipKey") as string) ?? "";
                 syncMac = true.Equals(Tailscale.Get(o, "syncMac"));
                 soundOn = true.Equals(Tailscale.Get(o, "sound"));
+                netAlerts = !false.Equals(Tailscale.Get(o, "netAlerts"));
                 autoExitNode = (Tailscale.Get(o, "autoExitNode") as string) ?? "";
                 autoExitActive = (Tailscale.Get(o, "autoExitActive") as string) ?? "";
                 var nets = Tailscale.Get(o, "trustedNets") as object[];
@@ -395,6 +396,13 @@ namespace TailOrbit
             set { soundOn = value; Save(); }
         }
 
+        // 正在用的设备改走中继、延迟比平时高出一截时提醒（默认开）
+        public static bool NetAlerts
+        {
+            get { return netAlerts; }
+            set { netAlerts = value; Save(); }
+        }
+
         // 在不信任的网络上自动使用的出口节点（IP；"" 是不自动用）
         public static string AutoExitNode
         {
@@ -444,7 +452,7 @@ namespace TailOrbit
                 string temp = FilePath + ".tmp";
                 var o = new Dictionary<string, object>
                 {
-                    { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac }, { "sound", soundOn },
+                    { "watch", watch.ToList() }, { "lang", language }, { "theme", theme }, { "autoUpdate", autoUpdate }, { "clip", clipOn }, { "clipKey", clipKey }, { "syncMac", syncMac }, { "sound", soundOn }, { "netAlerts", netAlerts },
                     { "autoExitNode", autoExitNode }, { "autoExitActive", autoExitActive }, { "trustedNets", trusted.ToList() }
                 };
                 File.WriteAllText(temp, new JavaScriptSerializer().Serialize(o), new UTF8Encoding(false));

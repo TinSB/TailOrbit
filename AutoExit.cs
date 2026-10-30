@@ -167,10 +167,7 @@ namespace TailOrbit
         // 现在连着的网络：有默认网关的网卡上的（Tailscale 自己那块不算）。网络和网卡的编号要经 COM 接口本身取，按名字调取不出来
         static List<Net> Uplinks()
         {
-            var nics = new HashSet<string>(NetworkInterface.GetAllNetworkInterfaces()
-                .Where(n => n.OperationalStatus == OperationalStatus.Up && n.Description.IndexOf("Tailscale", StringComparison.OrdinalIgnoreCase) < 0
-                    && n.GetIPProperties().GatewayAddresses.Any(g => !g.Address.Equals(IPAddress.Any) && !g.Address.Equals(IPAddress.IPv6Any)))
-                .Select(n => n.Id), StringComparer.OrdinalIgnoreCase);
+            var nics = new HashSet<string>(NetworkInterface.GetAllNetworkInterfaces().Where(Uplink).Select(n => n.Id), StringComparer.OrdinalIgnoreCase);
             var list = new List<Net>();
             dynamic nlm = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("DCB00C01-570F-4A9B-8D69-199FDBA5723B")));   // Windows 的网络列表
             foreach (object item in nlm.GetNetworkConnections())
@@ -182,6 +179,41 @@ namespace TailOrbit
                 if (list.All(x => x.Id != id)) list.Add(new Net { Id = id, Name = n.GetName() });
             }
             return list;
+        }
+
+        static bool Uplink(NetworkInterface n)
+        {
+            return n.OperationalStatus == OperationalStatus.Up && n.Description.IndexOf("Tailscale", StringComparison.OrdinalIgnoreCase) < 0
+                && n.GetIPProperties().GatewayAddresses.Any(g => !g.Address.Equals(IPAddress.Any) && !g.Address.Equals(IPAddress.IPv6Any));
+        }
+
+        // 本机所在的局域网网段（共享局域网用）：联网那块网卡上的私有 IPv4 地址按前缀长度算，比如 192.168.1.0/24；没有是 ""
+        public static string Subnet()
+        {
+            foreach (var n in NetworkInterface.GetAllNetworkInterfaces().Where(Uplink))
+                foreach (var u in n.GetIPProperties().UnicastAddresses)
+                {
+                    var b = u.Address.GetAddressBytes();
+                    int bits = u.PrefixLength;
+                    if (b.Length != 4 || bits < 8 || bits > 30 || !(b[0] == 10 || b[0] == 172 && (b[1] & 0xF0) == 16 || b[0] == 192 && b[1] == 168)) continue;
+                    uint ip = (uint)b[0] << 24 | (uint)b[1] << 16 | (uint)b[2] << 8 | b[3], net = ip & (uint.MaxValue << (32 - bits));
+                    return (net >> 24) + "." + (net >> 16 & 255) + "." + (net >> 8 & 255) + "." + (net & 255) + "/" + bits;
+                }
+            return "";
+        }
+
+        // Tailscale 那块网卡所在网络的类别：0 公用、1 专用、2 域；找不到是 -1（本机开放了什么按它查防火墙）
+        public static int TailscaleCategory()
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => n.Description.IndexOf("Tailscale", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (nic == null) return -1;
+            dynamic nlm = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("DCB00C01-570F-4A9B-8D69-199FDBA5723B")));
+            foreach (object item in nlm.GetNetworkConnections())
+            {
+                var c = (INetworkConnection)item;
+                if (c.GetAdapterId().ToString("B").Equals(nic.Id, StringComparison.OrdinalIgnoreCase)) return ((dynamic)c.GetNetwork()).GetCategory();   // INetwork 后面那几个方法没声明，经 IDispatch 调
+            }
+            return -1;
         }
 
         // 只声明到用得着的那个方法为止，顺序照 netlistmgr.h

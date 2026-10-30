@@ -198,6 +198,20 @@ namespace TailOrbit
             Ui.AnimFrom(shift, TranslateTransform.YProperty, -6, 0, 260, 0, MainEase.Settle);
         }
 
+        // 能翻的一块：上边、下边还有内容藏着的那一边淡出一截，不是一刀切
+        public static void FadeEdges(ScrollViewer sv)
+        {
+            bool above = sv.VerticalOffset > 0.5, below = sv.VerticalOffset < sv.ScrollableHeight - 0.5;
+            if (!above && !below) { sv.OpacityMask = null; return; }
+            double edge = Math.Min(0.25, 32 / Math.Max(sv.ActualHeight, 1));
+            var mask = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
+            mask.GradientStops.Add(new GradientStop(above ? Colors.Transparent : Colors.Black, 0));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, edge));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 1 - edge));
+            mask.GradientStops.Add(new GradientStop(below ? Colors.Transparent : Colors.Black, 1));
+            sv.OpacityMask = mask;
+        }
+
         // 圆角虚线框：还没有、还没开的东西
         public static Grid Dashed(Theme th, UIElement child, double radius)
         {
@@ -264,8 +278,8 @@ namespace TailOrbit
         public int Index { get; private set; }
         public event Action<int> Picked;
 
-        // solid：选中的那段是实心亮底（页面里的选择）；否则是淡底（标签栏）。uniform：各段等宽、撑满
-        public Segmented(Theme th, string[] options, int index, bool solid, bool uniform, double height, bool inChrome = false)
+        // solid：选中的那段是实心亮底（页面里的选择）；否则是淡底（标签栏）。uniform：各段等宽、撑满。字比 14 小的段与段挨得紧一些
+        public Segmented(Theme th, string[] options, int index, bool solid, bool uniform, double height, bool inChrome = false, double fontSize = 14)
         {
             this.th = th;
             this.solid = solid;
@@ -277,10 +291,11 @@ namespace TailOrbit
             row = uniform ? (Panel)new UniformGrid { Rows = 1 } : new StackPanel { Orientation = Orientation.Horizontal };
             for (int i = 0; i < options.Length; i++)
             {
-                var t = new TextBlock { Text = options[i], FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                var t = new TextBlock { Text = options[i], FontSize = fontSize, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 // 底下垫一份看不见的粗体字：选中变粗时这段不变宽，板子滑过去的终点不会在半路被重新排版打断
-                var ghost = new TextBlock { Text = options[i], FontSize = 14, FontWeight = FontWeights.SemiBold, Visibility = Visibility.Hidden, HorizontalAlignment = HorizontalAlignment.Center };
-                var b = new Border { Height = height, Padding = new Thickness(16, 0, 16, 0), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = new Grid { Children = { ghost, t } } };
+                var ghost = new TextBlock { Text = options[i], FontSize = fontSize, FontWeight = FontWeights.SemiBold, Visibility = Visibility.Hidden, HorizontalAlignment = HorizontalAlignment.Center };
+                double gap = fontSize < 14 ? 10 : 16;
+                var b = new Border { Height = height, Padding = new Thickness(gap, 0, gap, 0), Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = new Grid { Children = { ghost, t } } };
                 if (inChrome) WindowChrome.SetIsHitTestVisibleInChrome(b, true);
                 int k = i;
                 b.MouseEnter += delegate { if (k != Index) t.Foreground = th.Fg; };

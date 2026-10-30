@@ -369,6 +369,20 @@ namespace TailOrbit
             return map;
         }
 
+        // 在听的每一行：本地地址、端口、进程号（本机开放了什么用）
+        public static List<Listen> Listening()
+        {
+            var list = new List<Listen>();
+            Scan(2, 3, 24, row => list.Add(new Listen { Address = new IPAddress((long)(uint)Marshal.ReadInt32(row, 4)), Port = Port(row, 8), Pid = Marshal.ReadInt32(row, 20) }));
+            Scan(23, 3, 56, row =>
+            {
+                var b = new byte[16];
+                Marshal.Copy(row, b, 0, 16);
+                list.Add(new Listen { Address = new IPAddress(b), Port = Port(row, 20), Pid = Marshal.ReadInt32(row, 52) });
+            });
+            return list;
+        }
+
         // 连到本机这几个端口上的对方地址（收文件时认发送方用）
         public static List<string> Remotes(int[] local)
         {

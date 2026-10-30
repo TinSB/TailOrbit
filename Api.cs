@@ -48,7 +48,7 @@ namespace TailOrbit
                 }
                 return null;
             }
-            catch (WebException e) { return Explain(e); }
+            catch (WebException e) { return Explain(e, L.T("当前账号无权修改访问控制，需要所有者或管理员权限。")); }
             catch (FormatException) { return L.T("无法解析当前的访问控制策略，未做任何更改。"); }
             finally
             {
@@ -81,13 +81,14 @@ namespace TailOrbit
             }
         }
 
-        static string Explain(WebException e)
+        // 后台拒绝的原因讲给用户听；forbidden 是 403（权限不够）时说的话（Admin 也用）
+        public static string Explain(WebException e, string forbidden)
         {
             var resp = e.Response as HttpWebResponse;
             if (resp == null) return L.T("无法连接 Tailscale 管理控制台：{0}", e.Message);
             int code = (int)resp.StatusCode;
             if (code == 401) return L.T("访问令牌无效。请确认已完整复制，且令牌未被撤销。");
-            if (code == 403) return L.T("当前账号无权修改访问控制，需要所有者或管理员权限。");
+            if (code == 403) return forbidden;
             if (code == 412) return L.T("访问控制刚刚被修改，请重试。");
             string message = null;
             try

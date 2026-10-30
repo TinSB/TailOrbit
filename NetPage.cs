@@ -1,16 +1,21 @@
 // 网络页：本机在中间，直连的设备在里圈、经中继的在中圈、离线的在外圈，方向跟星网那页一致；
-// 连线上标着延迟，正在传东西的那条变粗、光点顺着传的方向流，名字下面写速度。
-// 右边是体检（打洞、IPv6、NAT、端口映射、中继、版本、密钥到期）和要处理的事，底下是这次开机以来的流量走了哪条路
+// 连线上标着延迟，正在传东西的那条变粗、光点顺着传的方向流，名字下面写速度（没在传、选了今天或几天时写这段时间的流量）。
+// 点一台弹出它的卡片：现在走哪条路、近 24 小时的延迟、近 30 天每天的流量，连着管理接口时还能删掉它、关掉它的密钥到期。
+// 右边先是要处理的事，再是体检（打洞、IPv6、NAT、端口映射、中继、版本、密钥到期、DNS、对外开放了什么），底下是流量走了哪条路（本次启动以来，或者 NetLog 记的今天、7 天、30 天）
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -35,7 +40,7 @@ namespace TailOrbit
         // 地图上的一台设备
         class Dot
         {
-            public string Ip = "", Name = "", Os = "", Addr = "", Relay = "";
+            public string Ip = "", Name = "", Os = "", Addr = "", Relay = "", Id = "", Dns = "";   // Id：Tailscale 的设备 ID（记录、管理接口按它认）
             public bool Online, Active;
             public DateTime? LastSeen, KeyExpiry;
             public long Rx, Tx;
@@ -68,6 +73,7 @@ namespace TailOrbit
             public Dictionary<string, object> Status;
             public Dictionary<string, long> Traffic;
             public List<ServeEntry> Shares;
+            public Dictionary<string, NetLog.Usage> Usage;
             public string Upstream;
             public DateTime At = DateTime.Now;
         }
@@ -83,7 +89,7 @@ namespace TailOrbit
         readonly ScaleTransform corePop = new ScaleTransform(1, 1);
         readonly IconView coreIcon;
         readonly TextBlock coreName;
-        readonly Border panel;
+        readonly Border panel, footBox;
         readonly TextBlock when, down, up;
         readonly StackPanel checks = new StackPanel(), issues = new StackPanel();
         readonly Grid bar = new Grid { Height = 10, Margin = new Thickness(0, 14, 0, 0) };
@@ -104,6 +110,22 @@ namespace TailOrbit
         List<string> health = new List<string>();
         List<ServeEntry> shares = new List<ServeEntry>();
         Dictionary<string, long> traffic = new Dictionary<string, long>();
+        static int range;   // 底下的流量看哪段：0 本次启动以来、1 今天、2 近 7 天、3 近 30 天；换语言、换深浅色整页重建后照旧
+        Dictionary<string, NetLog.Usage> usage = new Dictionary<string, NetLog.Usage>();   // 选的那段时间每台设备的流量
+        Dictionary<string, object> prefs;   // get --json，半分钟读一次：DNS、本机共享的出口节点和局域网、挡没挡传入连接
+        Exposure.Result exposure;
+        string dnsName;                     // 拿来试解析的那台；null 是还没试
+        bool dnsOk, magic = true, surveying;
+        DateTime surveyAt = DateTime.MinValue;
+        string selfId = "";
+        List<string> selfRoutes = new List<string>();   // 后台批准了本机共享的哪些网段
+        Popup card, openList;                // 设备卡片、对外开放的列表
+        DateTime cardClosed, openClosed;
+        string cardIp, confirm, acting;      // 卡片开着的是哪台；等确认删除的设备；正在替用户调管理接口的那件事
+        DateTime confirmAt;                  // 第一下“删除”是什么时候点的
+        string scanError;                    // 开放检查上次记进日志的错：一直是同一个错就不每半分钟记一遍
+        TextBlock cardPath;
+        Border cardFoot;
 
         public NetPage(Host host, Func<string, double> homeAngle) : base(host)
         {
@@ -146,19 +168,26 @@ namespace TailOrbit
             var totals = new StackPanel { Orientation = Orientation.Horizontal };
             totals.Children.Add(down);
             totals.Children.Add(up);
-            var foot = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
+            var spans = new Segmented(Th, new[] { L.T("本次启动"), L.T("今天"), L.T("近 {0} 天", 7), L.T("近 {0} 天", 30) }, range, false, false, 28, false, 12.5) { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 12) };
+            spans.Picked += k => { range = k; Poll(); };
+            var foot = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+            foot.Children.Add(spans);
             foot.Children.Add(totals);
             foot.Children.Add(bar);
             foot.Children.Add(legend);
-            var footBox = new Border { BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = foot, ToolTip = Ui.Tip(Th, L.T("自 Tailscale 本次启动以来的收发流量")) };
+            footBox = new Border { BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = foot };
+            // 要处理的事放在体检前面（体检行多，放后面会被挤到看不见）；放不下时中间这块用滚轮翻，头和底下的流量不动
+            var list = new StackPanel();
+            list.Children.Add(issues);
+            list.Children.Add(checks);
+            var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false };
+            scroll.ScrollChanged += delegate { Kit.FadeEdges(scroll); };
             var dock = new DockPanel();
+            DockPanel.SetDock(head, Dock.Top);
+            dock.Children.Add(head);
             DockPanel.SetDock(footBox, Dock.Bottom);
             dock.Children.Add(footBox);
-            var top = new StackPanel();
-            top.Children.Add(head);
-            top.Children.Add(checks);
-            top.Children.Add(issues);
-            dock.Children.Add(top);
+            dock.Children.Add(scroll);
             panel = new Border
             {
                 Width = 404, Margin = new Thickness(0, 66, 28, 32), HorizontalAlignment = HorizontalAlignment.Right, CornerRadius = new CornerRadius(18),
@@ -172,7 +201,6 @@ namespace TailOrbit
                 double w = Math.Max(340, Math.Min(404, ActualWidth * 0.36));
                 panel.Width = w;
                 field.Margin = new Thickness(0, 44, w + 28, 0);
-                Dispatcher.BeginInvoke(new Action(RenderIssues), DispatcherPriority.Loaded);   // 面板高度变了，重算放得下几条
             };
             poll.Tick += delegate { if (!Away) Poll(); };
             clock.Tick += delegate { if (!Away) RenderChecks(); };
@@ -206,13 +234,16 @@ namespace TailOrbit
             bool full = ticks++ % 4 == 0;                                   // 流量每 6 秒读一次
             bool wantShares = (DateTime.Now - sharesAt).TotalSeconds > 30;  // 分享半分钟读一次
             bool wantUpstream = upstream == null;
+            int span = range;
             Snap s;
-            try { s = await Task.Run(() => Read(full, wantShares, wantUpstream)); }
+            try { s = await Task.Run(() => Read(full, wantShares, wantUpstream, span)); }
             finally { polling = false; }
             Apply(s);
+            if ((DateTime.Now - surveyAt).TotalSeconds > 30) Survey();
         }
 
-        static Snap Read(bool full, bool wantShares, bool wantUpstream)
+        // span：底下的流量看的那段（不是本次启动时从记录里加）
+        static Snap Read(bool full, bool wantShares, bool wantUpstream, int span)
         {
             var s = new Snap();
             try
@@ -228,7 +259,51 @@ namespace TailOrbit
                 if (wantUpstream) s.Upstream = Tailscale.Upstream() ?? "";
             }
             catch (Win32Exception) { }   // 没装 Tailscale
+            if (span > 0) s.Usage = NetLog.Range(DateTime.Today.AddDays(span == 1 ? 0 : span == 2 ? -6 : -29), DateTime.Today);
             return s;
+        }
+
+        // 半分钟查一次的：本机设置（get --json）、对外开放了什么、DNS 好不好用（真的解析一台在线设备的名字）
+        async void Survey()
+        {
+            if (surveying) return;
+            surveying = true;
+            surveyAt = DateTime.Now;
+            var probe = dots.Values.Where(d => d.Online && d.Dns != "").OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+            string host = probe == null ? null : probe.Dns, want = probe == null ? null : probe.Ip;
+            var list = shares;
+            Dictionary<string, object> p = null;
+            Exposure.Result e = null;
+            bool ok = false;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    var g = Tailscale.Run("get --json");
+                    if (g.Code == 0) p = Tailscale.Json(g.Out);
+                    // 防火墙服务停了、被别家防火墙接管、规则或进程读出了意外的东西：这一项不显示，DNS 和本机设置照常更新
+                    try { e = Exposure.Scan(p != null && true.Equals(Tailscale.Get(p, "shields-up")), list); }
+                    catch (Exception x)
+                    {
+                        if (x.Message != scanError) Log.Write(x);
+                        scanError = x.Message;
+                    }
+                    if (host != null) ok = Resolves(host, want);
+                });
+            }
+            catch (Win32Exception) { }   // 没装 Tailscale
+            finally { surveying = false; }
+            if (p != null) prefs = p;
+            if (e != null) exposure = e;
+            dnsName = host;
+            dnsOk = ok;
+            RenderChecks();
+        }
+
+        static bool Resolves(string host, string ip)
+        {
+            try { return Dns.GetHostAddresses(host).Any(a => a.ToString() == ip); }
+            catch (SocketException) { return false; }
         }
 
         static Dictionary<string, long> ParseMetrics(string text)
@@ -253,6 +328,11 @@ namespace TailOrbit
             selfName = Tailscale.ShortName(self);
             selfRelay = (Tailscale.Get(self, "Relay") as string) ?? "";
             selfExpiry = Time(Tailscale.Get(self, "KeyExpiry"));
+            selfId = (Tailscale.Get(self, "ID") as string) ?? "";
+            // 后台批准了的网段（出口节点是 0.0.0.0/0、::/0）会出现在本机的 AllowedIPs 里
+            selfRoutes = ((Tailscale.Get(self, "AllowedIPs") as object[]) ?? new object[0]).Concat((Tailscale.Get(self, "PrimaryRoutes") as object[]) ?? new object[0]).OfType<string>().Distinct().ToList();
+            magic = !false.Equals(Tailscale.Get(Tailscale.Get(s.Status, "CurrentTailnet") as Dictionary<string, object>, "MagicDNSEnabled"));
+            if (s.Usage != null) usage = s.Usage;
             ver = ((Tailscale.Get(s.Status, "Version") as string) ?? "").Split('-')[0];
             var h = Tailscale.Get(s.Status, "Health") as object[];
             health = h == null ? new List<string>() : h.OfType<string>().ToList();
@@ -270,6 +350,8 @@ namespace TailOrbit
                     string name = Tailscale.ShortName(p);
                     d.Name = name == "device-of-shared-to-user" ? L.T("共享设备") : name;
                     d.Os = (Tailscale.Get(p, "OS") as string) ?? "";
+                    d.Id = (Tailscale.Get(p, "ID") as string) ?? "";
+                    d.Dns = ((Tailscale.Get(p, "DNSName") as string) ?? "").TrimEnd('.');
                     d.Online = true.Equals(Tailscale.Get(p, "Online"));
                     d.Active = true.Equals(Tailscale.Get(p, "Active"));
                     d.Addr = (Tailscale.Get(p, "CurAddr") as string) ?? "";
@@ -416,71 +498,164 @@ namespace TailOrbit
                 int days = (int)Math.Floor((k.At - DateTime.UtcNow).TotalDays);
                 add(days < 14 ? "bad" : "none", L.T("最早的密钥到期时间"), k.Name + " · " + (days < 0 ? L.T("已过期") : days == 0 ? L.T("今天") : L.T("{0} 天后", days)));
             }
+            // DNS：本机用不用 Tailscale 的 DNS、MagicDNS 开没开、真的解析一台在线设备的名字对不对
+            if (prefs != null)
+            {
+                string why = false.Equals(Tailscale.Get(prefs, "accept-dns")) ? L.T("本机未使用 Tailscale DNS") : !magic ? L.T("未开启 MagicDNS")
+                    : dnsName != null && !dnsOk ? L.T("无法解析 {0}", dnsName.Split('.')[0]) : null;
+                add(why == null ? "ok" : "bad", "DNS", why ?? L.T("正常"));
+            }
+            // 对外开放了什么：点开看列表；有公开到互联网的分享时标红
+            if (exposure != null)
+            {
+                int n = exposure.Items.Count;
+                bool open = exposure.Items.Any(x => x.Share != null && x.Share.Public);
+                rows.Add(new[] { open ? "bad" : exposure.Shields ? "ok" : "none", L.T("对外开放"), n > 0 ? L.T("{0} 项", n) : exposure.Shields ? L.T("已阻止所有传入连接") : L.T("无"), n > 0 ? "list" : "" });
+            }
             string sig = string.Join("\n", rows.Select(r => string.Join("\t", r)));
             if (sig != checksShown)
             {
                 checksShown = sig;
                 checks.Children.Clear();
-                foreach (var r in rows) checks.Children.Add(Row(r[0], r[1], r[2]));
+                foreach (var r in rows) checks.Children.Add(Row(r[0], r[1], r[2], r.Length > 3 && r[3] == "list" ? (Action<FrameworkElement>)ShowExposure : null));
             }
             RenderIssues();
             RenderTraffic();
         }
 
-        // 要处理的事：Tailscale 自己报的问题、背后程序停了的分享、好久没上线的设备；面板放不下的收成一行“还有几件”
+        // 要处理的事：Tailscale 自己报的问题、背后程序停了的分享、本机共享的出口节点和局域网还没批准、两周内到期的密钥、好久没上线的设备。
+        // 连着管理接口的就在这里批准、关掉到期、删掉；没连的打开管理控制台
         void RenderIssues()
         {
             var all = new List<Func<FrameworkElement>>();   // 先只记要建什么，内容没变就不建
             var texts = new List<string>();
-            foreach (var h in health) { var t = h; texts.Add(t); all.Add(() => Issue(t, null, null)); }
-            foreach (var e in shares.Where(x => x.Dead != ""))
+            bool admin = Admin.Connected;
+            Action<string, string, Action, string> add = (t, a, click, key) =>
             {
-                string t = L.T("分享 {0} 无法打开", e.Label);
-                texts.Add(t);
-                all.Add(() => Issue(t, L.T("查看"), () => Host.ShowPage("share")));
+                bool busy = key != null && acting == key, sure = key != null && confirm == key;
+                string label = busy ? L.T("正在处理…") : sure ? L.T("确认删除") : a;
+                texts.Add(t + "\t" + label);
+                all.Add(() => Issue(t, label, busy ? null : click, sure));
+            };
+            foreach (var h in health) add(h, null, null, null);
+            foreach (var e in shares.Where(x => x.Dead != "")) add(L.T("分享 {0} 无法打开", e.Label), L.T("查看"), () => Host.ShowPage("share"), null);
+            var wait = Waiting();
+            if (wait.Count > 0)
+            {
+                bool exit = wait.Contains("0.0.0.0/0"), lan = wait.Any(x => x != "0.0.0.0/0" && x != "::/0");
+                add(exit && lan ? L.T("本机共享的出口节点和局域网等待批准") : exit ? L.T("本机作为出口节点等待批准") : L.T("本机共享的局域网等待批准"),
+                    admin ? L.T("批准") : L.T("前往管理控制台"), () => { var now = Waiting(); Act("approve", () => Admin.Approve(selfId, now)); }, "approve");   // 点的时候再看等批准的是哪些（文字没变时这一行不重建）
+            }
+            var keys = dots.Values.Where(d => d.KeyExpiry != null).Select(d => new { d.Id, d.Name, At = d.KeyExpiry.Value }).ToList();
+            if (selfExpiry != null) keys.Add(new { Id = selfId, Name = selfName, At = selfExpiry.Value });
+            foreach (var k in keys.Where(x => (x.At - DateTime.UtcNow).TotalDays < 14).OrderBy(x => x.At))
+            {
+                int days = (int)Math.Floor((k.At - DateTime.UtcNow).TotalDays);
+                string id = k.Id;
+                add(days < 0 ? L.T("{0} 的密钥已过期", k.Name) : L.T("{0} 的密钥 {1} 天后到期", k.Name, days), admin ? L.T("关闭到期") : L.T("前往管理控制台"), () => Act("key:" + id, () => Admin.NoExpiry(id)), "key:" + id);
             }
             foreach (var d in dots.Values.Where(x => !x.Online && x.LastSeen != null && (DateTime.UtcNow - x.LastSeen.Value).TotalDays >= 7).OrderBy(x => x.LastSeen))
             {
-                string t = L.T("{0} 已离线 {1} 天", d.Name, Math.Floor((DateTime.UtcNow - d.LastSeen.Value).TotalDays));
-                texts.Add(t);
-                all.Add(() => Issue(t, L.T("前往管理控制台"), () => Open("https://login.tailscale.com/admin/machines")));
+                string id = d.Id;
+                add(L.T("{0} 已离线 {1} 天", d.Name, Math.Floor((DateTime.UtcNow - d.LastSeen.Value).TotalDays)), admin ? L.T("删除") : L.T("前往管理控制台"), () => Remove(id), "del:" + id);
             }
-            int fit = 3;
-            if (panel.ActualHeight > 0)
-            {
-                var dock = (DockPanel)panel.Child;
-                double foot = dock.Children[0].DesiredSize.Height, used = 48 + checks.Children.Count * 40;
-                fit = Math.Max(1, (int)((panel.ActualHeight - panel.Padding.Top - panel.Padding.Bottom - 2 - foot - used - 8) / 48));
-            }
-            string sig = fit + "\n" + string.Join("\n", texts);
+            string sig = string.Join("\n", texts);
             if (sig == issuesShown) return;
             issuesShown = sig;
             issues.Children.Clear();
-            int show = all.Count <= fit ? all.Count : fit - 1;
-            for (int i = 0; i < show; i++) issues.Children.Add(all[i]());
-            if (show < all.Count) issues.Children.Add(Issue(L.T("还有 {0} 项待处理", all.Count - show), null, null));
+            foreach (var f in all) issues.Children.Add(f());
         }
 
+        // 本机共享了、后台还没批准的网段：出口节点是 0.0.0.0/0 和 ::/0
+        List<string> Waiting()
+        {
+            var want = new List<string>();
+            if (prefs == null) return want;
+            if (true.Equals(Tailscale.Get(prefs, "advertise-exit-node"))) want.AddRange(new[] { "0.0.0.0/0", "::/0" });
+            want.AddRange(((Tailscale.Get(prefs, "advertise-routes") as string) ?? "").Split(',').Select(x => x.Trim()).Where(x => x != ""));
+            return want.Where(x => !selfRoutes.Contains(x)).ToList();
+        }
+
+        // 替用户调管理接口；没连就打开管理控制台。做着的时候那一行写“正在处理…”，没做成弹通知说原因，做成了马上重读
+        async void Act(string key, Func<string> work)
+        {
+            if (!Admin.Connected) { Open("https://login.tailscale.com/admin/machines"); return; }
+            if (acting != null) return;
+            acting = key;
+            confirm = null;
+            RenderIssues();
+            RefreshCard();
+            string why;
+            try { why = await Task.Run(work); }
+            finally { acting = null; }
+            if (why != null) Host.Notify(L.T("管理控制台未完成此操作"), why);
+            RenderIssues();
+            RefreshCard();
+            Poll();
+        }
+
+        // 删除要点两下：第一下按钮变成“确认删除”，5 秒内不点就算了。跟第一下隔不到 0.6 秒的是双击带出来的，不算确认
+        void Remove(string id)
+        {
+            if (!Admin.Connected) { Open("https://login.tailscale.com/admin/machines"); return; }
+            string key = "del:" + id;
+            if (confirm == key)
+            {
+                if ((DateTime.Now - confirmAt).TotalMilliseconds >= 600) Act(key, () => Admin.Delete(id));
+                return;
+            }
+            confirm = key;
+            confirmAt = DateTime.Now;
+            RenderIssues();
+            RefreshCard();
+            Ui.After(5000, () =>
+            {
+                if (confirm != key) return;
+                confirm = null;
+                RenderIssues();
+                RefreshCard();
+            });
+        }
+
+        // 本次启动以来的看 Tailscale 自己的计数（分得出 IPv6、IPv4 直连）；今天、几天的看 NetLog 的记录（只分直连、中继）
         void RenderTraffic()
         {
-            long rx = Sum("inbound"), tx = Sum("outbound");
+            long rx, tx;
+            List<Tuple<string, long, Brush>> parts;
+            if (range == 0)
+            {
+                rx = Sum("inbound");
+                tx = Sum("outbound");
+                parts = new List<Tuple<string, long, Brush>>
+                {
+                    Tuple.Create(L.T("IPv6 直连"), Both("direct_ipv6"), (Brush)Th.Fg),
+                    Tuple.Create(L.T("IPv4 直连"), Both("direct_ipv4"), (Brush)Th.Mute),
+                    Tuple.Create(L.T("中继"), Both("derp") + Both("peer_relay_ipv4") + Both("peer_relay_ipv6"), Stripes()),
+                };
+            }
+            else
+            {
+                rx = usage.Values.Sum(u => u.Rx);
+                tx = usage.Values.Sum(u => u.Tx);
+                parts = new List<Tuple<string, long, Brush>>
+                {
+                    Tuple.Create(L.T("直连"), usage.Values.Sum(u => u.RxDirect + u.TxDirect), (Brush)Th.Fg),
+                    Tuple.Create(L.T("中继"), usage.Values.Sum(u => u.Relay), Stripes()),
+                };
+            }
             down.Text = "↓ " + Ui.FormatSize(rx);
             up.Text = "↑ " + Ui.FormatSize(tx);
-            long v6 = Both("direct_ipv6"), v4 = Both("direct_ipv4"), relay = Both("derp") + Both("peer_relay_ipv4") + Both("peer_relay_ipv6"), all = v6 + v4 + relay;
+            parts = parts.Where(x => x.Item2 > 0).ToList();
+            long all = parts.Sum(x => x.Item2);
             // 按显示出来的比例比（千分之一），字节数在涨但比例没变时不重画
-            string sig = all == 0 ? "0" : Math.Round(v6 * 1000.0 / all) + "/" + Math.Round(v4 * 1000.0 / all) + "/" + Math.Round(relay * 1000.0 / all);
+            string sig = range + ":" + string.Join("/", parts.Select(p => p.Item1 + Math.Round(p.Item2 * 1000.0 / all)));
             if (sig == trafficShown) return;
             trafficShown = sig;
+            footBox.ToolTip = Ui.Tip(Th, range == 0 ? L.T("自 Tailscale 本次启动以来的收发流量") : L.T("TailOrbit 每分钟记录一次，记录只保存在本机"));
             bar.ColumnDefinitions.Clear();
             bar.Children.Clear();
             legend.Children.Clear();
             if (all == 0) return;
-            var parts = new List<Tuple<string, long, Brush>>
-            {
-                Tuple.Create(L.T("IPv6 直连"), v6, (Brush)Th.Fg),
-                Tuple.Create(L.T("IPv4 直连"), v4, (Brush)Th.Mute),
-                Tuple.Create(L.T("中继"), relay, Stripes()),
-            }.Where(x => x.Item2 > 0).ToList();
             for (int i = 0; i < parts.Count; i++)
             {
                 var p = parts[i];
@@ -526,30 +701,51 @@ namespace TailOrbit
             return b;
         }
 
-        // 一行体检：左边一个点（绿＝好、红＝要管、空心＝说明一下），名目、结果
-        FrameworkElement Row(string state, string key, string value)
+        // 一行体检：左边一个点（绿＝好、红＝要管、空心＝说明一下），名目、结果；open 不是 null 的整行能点开看详情
+        FrameworkElement Row(string state, string key, string value, Action<FrameworkElement> open = null)
         {
             var k = Kit.Text(key, 14, Th.Mute);
             k.Margin = new Thickness(12, 0, 12, 0);
             var v = Kit.Text(value, 14, Th.Fg);
-            return new Border { Height = 40, BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Child = Ui.Columns(1, Mark(state), k, v) };
+            var row = new Border { Height = 40, BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Background = Brushes.Transparent };
+            if (open == null)
+            {
+                row.Child = Ui.Columns(1, Mark(state), k, v);
+                return row;
+            }
+            var chev = new IconView("chevron-down", 13, Th.Mute) { Margin = new Thickness(6, 1, 0, 0), RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = new RotateTransform(-90) };
+            row.Child = Ui.Columns(1, Mark(state), k, v, chev);
+            row.Cursor = Cursors.Hand;
+            row.MouseEnter += delegate { chev.Stroke = Th.Fg; };
+            row.MouseLeave += delegate { chev.Stroke = Th.Mute; };
+            row.MouseLeftButtonUp += delegate { open(row); };
+            return row;
         }
 
-        FrameworkElement Issue(string text, string action, Action click)
+        // 一件要处理的事；action 是按钮上的字，click 是 null 时按钮只显示不能点（正在做）；sure 是等确认删除，按钮变红
+        FrameworkElement Issue(string text, string action, Action click, bool sure = false)
         {
             var t = new TextBlock { Text = text, FontSize = 14, Foreground = Th.Fg, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 8, 12, 8) };
             var row = new Border { MinHeight = 48, BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0) };
             if (action == null) { row.Child = Ui.Columns(1, Mark("bad"), t); return row; }
+            row.Child = Ui.Columns(1, Mark("bad"), t, Small(action, click, sure));
+            return row;
+        }
+
+        // 小按钮：淡底；等确认删除时红底白字
+        Border Small(string text, Action click, bool sure)
+        {
+            Brush rest = sure ? Th.Bad : Th.Hair;
             var b = new Border
             {
-                Height = 32, Padding = new Thickness(12, 0, 12, 0), CornerRadius = new CornerRadius(9), Background = Th.Hair, Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock { Text = action, FontSize = 13, Foreground = Th.Fg, VerticalAlignment = VerticalAlignment.Center }
+                Height = 32, Padding = new Thickness(12, 0, 12, 0), CornerRadius = new CornerRadius(9), Background = rest, Cursor = click == null ? null : Cursors.Hand, VerticalAlignment = VerticalAlignment.Center,
+                Opacity = click == null ? 0.6 : 1, Child = new TextBlock { Text = text, FontSize = 13, FontWeight = sure ? FontWeights.SemiBold : FontWeights.Normal, Foreground = sure ? Th.Bg : Th.Fg, VerticalAlignment = VerticalAlignment.Center }
             };
-            b.MouseEnter += delegate { b.Background = Th.Fill; };
-            b.MouseLeave += delegate { b.Background = Th.Hair; };
+            if (click == null) return b;
+            b.MouseEnter += delegate { if (sure) b.Opacity = 0.88; else b.Background = Th.Fill; };
+            b.MouseLeave += delegate { b.Opacity = 1; b.Background = rest; };
             b.MouseLeftButtonUp += delegate { click(); };
-            row.Child = Ui.Columns(1, Mark("bad"), t, b);
-            return row;
+            return b;
         }
 
         FrameworkElement Mark(string state)
@@ -575,11 +771,12 @@ namespace TailOrbit
             d.Disc.Children.Add(d.Icon);
             d.Disc.MouseEnter += delegate { Ui.ScaleTo(d.Pop, 1.06, 200, Ui.Spring); };
             d.Disc.MouseLeave += delegate { Ui.ScaleTo(d.Pop, 1, 200); };
-            // 点一下马上再测一次延迟
+            // 点一下马上再测一次延迟，弹出它的卡片
             d.Disc.MouseLeftButtonUp += delegate
             {
                 Ui.ScaleFrom(d.Pop, 0.9, 1.06, 360, 0, Ui.Spring);
                 if (d.Online && !d.Pinging) Ping(d);
+                ShowCard(d);
             };
             d.Title = new TextBlock { FontSize = 14, Foreground = Th.Mute, TextAlignment = TextAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             d.Note = new TextBlock { FontSize = 12.5, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
@@ -614,8 +811,9 @@ namespace TailOrbit
             d.Title.Text = d.Name;
             d.Title.Foreground = on ? Th.Mute : Th.Dim;
             d.Disc.ToolTip = Ui.Tip(Th, Describe(d));
-            // 名字下面：在传东西写速度，离线写多久了
+            // 名字下面：在传东西写速度，离线写多久了，选了今天或几天时写这段时间的流量
             int dir = 0;
+            NetLog.Usage used;
             double rate = Math.Max(d.Down, d.Up);
             if (on && rate >= Busy)
             {
@@ -631,7 +829,14 @@ namespace TailOrbit
                 d.Note.FontFamily = Ui.TextFont;
                 d.Note.Foreground = gone.TotalDays >= 7 ? Th.Bad : Th.Dim;
             }
+            else if (on && range > 0 && usage.TryGetValue(d.Id, out used) && used.Total > 0)
+            {
+                d.Note.Text = Ui.FormatSize(used.Total);
+                d.Note.FontFamily = Ui.MonoFont;
+                d.Note.Foreground = Th.Dim;
+            }
             else d.Note.Text = "";
+            if (card != null && card.IsOpen && cardIp == d.Ip) cardPath.Text = PathText(d);
             // 连线：离线的不连；中继是虚线；在传东西的加粗
             d.Link.Opacity = on ? 1 : 0;
             d.Link.StrokeThickness = dir != 0 ? 3 : 1.5;
@@ -827,6 +1032,7 @@ namespace TailOrbit
         void Vanish(Dot d)
         {
             dots.Remove(d.Ip);
+            if (card != null && cardIp == d.Ip) card.IsOpen = false;   // 刚删掉的就是卡片上这台
             SetFlow(d, 0);
             Ui.ScaleTo(d.Pop, 0.3, 260, MainEase.Sink);
             Ui.AnimTo(d.View, OpacityProperty, 0, 260, MainEase.Sink);
@@ -841,9 +1047,181 @@ namespace TailOrbit
             });
         }
 
+        // ---------- 设备卡片 ----------
+
+        // 点一台设备：现在走哪条路、近 24 小时的延迟、近 30 天每天的流量；连着管理接口时还能删掉它（离线的）、关掉它的密钥到期
+        async void ShowCard(Dot d)
+        {
+            // 卡片开着时再点同一台是想收起：按下那一下已经把它关了，别马上又开一个
+            if (card != null && cardIp == d.Ip && (card.IsOpen || (DateTime.Now - cardClosed).TotalMilliseconds < 250)) { card.IsOpen = false; return; }
+            if (card != null) card.IsOpen = false;
+            string id = d.Id, ip = d.Ip;
+            cardIp = ip;
+            var log = await Task.Run(() => Tuple.Create(NetLog.Recent(id, TimeSpan.FromHours(24)), NetLog.Daily(id, 30)));
+            if (cardIp != ip || !dots.ContainsKey(ip) || !visible) return;   // 等的时候点了别的、它没了、换了页
+            confirm = null;
+            var body = CardBody(d, log.Item1, log.Item2);
+            card = new Popup { PlacementTarget = d.Disc, Placement = PlacementMode.Right, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = 4, VerticalOffset = -60 };
+            card.Closed += delegate { cardClosed = DateTime.Now; };
+            Kit.Pop(Th, card, body, 344, 16, new Thickness(20, 18, 20, 18), 16);
+        }
+
+        FrameworkElement CardBody(Dot d, List<NetLog.Sample> recent, List<NetLog.Usage> days)
+        {
+            var name = new TextBlock { Text = d.Name, FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, TextTrimming = TextTrimming.CharacterEllipsis };
+            cardPath = Kit.Mono(PathText(d), 12.5, Th.Mute);
+            cardPath.Margin = new Thickness(0, 3, 0, 0);
+            var who = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Children = { name, cardPath } };
+            var body = new StackPanel();
+            body.Children.Add(Ui.Columns(1, Kit.Disc(Th, Icons.ForOs(d.Os), 44, d.Online), who));
+            // 延迟：只在正在通信时测（不为了画图去叫醒手机）
+            var samples = recent.Where(x => x.Ms >= 0).ToList();
+            body.Children.Add(Heading(L.T("延迟 · 24 小时"), samples.Count > 0 ? L.T("最高 {0} ms", samples.Max(x => x.Ms)) : ""));
+            var trend = new Grid { Height = 92 };
+            trend.Children.Add(new Trend(Th, samples) { ToolTip = Ui.Tip(Th, L.T("实线为直连，虚线为经中继；空白处没有通信")) });
+            if (samples.Count == 0) trend.Children.Add(new TextBlock { Text = L.T("近 24 小时没有通信"), FontSize = 13, Foreground = Th.Dim, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+            body.Children.Add(trend);
+            // 流量：近 30 天每天一根，直连实心、中继斜纹叠在上面
+            body.Children.Add(Heading(L.T("流量 · 30 天"), ""));
+            body.Children.Add(Bars(days));
+            var sums = new UniformGrid { Columns = 3, Margin = new Thickness(0, 12, 0, 0) };
+            sums.Children.Add(Stat(L.T("今天"), days[days.Count - 1].Total));
+            sums.Children.Add(Stat(L.T("近 {0} 天", 7), days.Skip(days.Count - 7).Sum(u => u.Total)));
+            sums.Children.Add(Stat(L.T("近 {0} 天", 30), days.Sum(u => u.Total)));
+            body.Children.Add(sums);
+            cardFoot = new Border();
+            body.Children.Add(cardFoot);
+            CardActions(d);
+            return body;
+        }
+
+        // 现在走哪条路：地址、直连还是经哪里中继、延迟；离线的写上次在线
+        static string PathText(Dot d)
+        {
+            if (!d.Online) return d.LastSeen != null ? L.T("上次在线：{0}", Ui.When(d.LastSeen.Value.ToLocalTime())) : L.T("离线");
+            string via = d.Active ? d.Relay : d.Via;
+            string path = d.Ring == "direct" ? L.T("直连") : via == "peer" ? L.T("经其他设备中继") : L.T("经{0}中继", City(via));
+            return d.Ip + " · " + path + (d.Ms >= 0 ? " · " + d.Ms + " ms" : "");
+        }
+
+        FrameworkElement Heading(string text, string end)
+        {
+            var row = Ui.Columns(0, Kit.Text(text, 13, Th.Mute), Kit.Mono(end, 12, Th.Dim));
+            row.Margin = new Thickness(0, 18, 0, 8);
+            return row;
+        }
+
+        FrameworkElement Stat(string label, long bytes)
+        {
+            return new StackPanel { Children = { Kit.Text(label, 12.5, Th.Mute), Kit.Text(Ui.FormatSize(bytes), 15, Th.Fg, true) } };
+        }
+
+        // 一天一根：高低按这 30 天里最多的那天比；悬停看那天的日期和多少
+        FrameworkElement Bars(List<NetLog.Usage> days)
+        {
+            long max = Math.Max(1, days.Max(u => u.Total));
+            var g = new Grid { Height = 64 };
+            var f = L.Culture.DateTimeFormat;
+            for (int i = 0; i < days.Count; i++)
+            {
+                var u = days[i];
+                bool today = i == days.Count - 1;
+                g.ColumnDefinitions.Add(new ColumnDefinition());
+                var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
+                if (u.Total == 0) stack.Children.Add(new Border { Height = 2, CornerRadius = new CornerRadius(1), Background = Th.Hair });
+                else
+                {
+                    double relay = 62.0 * u.Relay / max, direct = 62.0 * (u.Total - u.Relay) / max;
+                    if (u.Relay > 0) stack.Children.Add(new Border { Height = Math.Max(2, relay), Background = Stripes(), CornerRadius = new CornerRadius(2, 2, 0, 0) });
+                    if (u.Total > u.Relay) stack.Children.Add(new Border { Height = Math.Max(2, direct), Background = today ? Th.Fg : Th.Mute, CornerRadius = new CornerRadius(u.Relay > 0 ? 0 : 2, u.Relay > 0 ? 0 : 2, 0, 0) });
+                }
+                string when = DateTime.Today.AddDays(i - days.Count + 1).ToString(f.MonthDayPattern, L.Culture);
+                var col = new Border
+                {
+                    Margin = new Thickness(1.5, 0, 1.5, 0), Background = Brushes.Transparent, Child = stack,
+                    ToolTip = Ui.Tip(Th, when + " · " + Ui.FormatSize(u.Total) + (u.Relay > 0 ? " · " + L.T("中继 {0}", Ui.FormatSize(u.Relay)) : ""))
+                };
+                Grid.SetColumn(col, i);
+                g.Children.Add(col);
+            }
+            return g;
+        }
+
+        // 卡片底下的按钮：连着管理接口时离线的能删、有到期的能关掉到期；没连的去管理控制台
+        void CardActions(Dot d)
+        {
+            bool offline = !d.Online, expires = d.KeyExpiry != null;
+            if (!offline && !expires) { cardFoot.Child = null; return; }
+            var stack = new StackPanel { Margin = new Thickness(0, 18, 0, 0) };
+            string id = d.Id;
+            if (!Admin.Connected) stack.Children.Add(Kit.Button(Th, L.T("前往管理控制台"), false, () => Open("https://login.tailscale.com/admin/machines")));
+            else
+            {
+                if (expires)
+                {
+                    var key = Kit.Button(Th, acting == "key:" + id ? L.T("正在处理…") : L.T("关闭密钥到期"), false, () => Act("key:" + id, () => Admin.NoExpiry(id)));
+                    stack.Children.Add(key);
+                }
+                if (offline)
+                {
+                    bool sure = confirm == "del:" + id;
+                    var del = Small(acting == "del:" + id ? L.T("正在处理…") : sure ? L.T("确认删除") : L.T("删除这台设备"), acting == "del:" + id ? null : (Action)(() => Remove(id)), sure);
+                    del.Height = 40;
+                    del.CornerRadius = new CornerRadius(11);
+                    ((TextBlock)del.Child).HorizontalAlignment = HorizontalAlignment.Center;
+                    if (!sure) ((TextBlock)del.Child).Foreground = Th.Bad;
+                    del.Margin = new Thickness(0, expires ? 8 : 0, 0, 0);
+                    stack.Children.Add(del);
+                }
+            }
+            cardFoot.Child = stack;
+        }
+
+        void RefreshCard()
+        {
+            Dot d;
+            if (card != null && card.IsOpen && cardIp != null && dots.TryGetValue(cardIp, out d)) CardActions(d);
+        }
+
+        // ---------- 对外开放 ----------
+
+        // 其他设备能连进来的：哪个程序在哪个端口，tailscale serve 的分享（公开到互联网的标红）；底下去设置页（阻止所有传入连接在那里）
+        void ShowExposure(FrameworkElement anchor)
+        {
+            if (openList != null && (openList.IsOpen || (DateTime.Now - openClosed).TotalMilliseconds < 250)) { openList.IsOpen = false; return; }
+            openList = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Left, StaysOpen = false, AllowsTransparency = true, HorizontalOffset = -6 };
+            openList.Closed += delegate { openClosed = DateTime.Now; };
+            Kit.Pop(Th, openList, new ScrollViewer { Content = ExposureBody(), MaxHeight = 460, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false }, 340, 16, new Thickness(18, 16, 18, 16), 16);
+        }
+
+        FrameworkElement ExposureBody()
+        {
+            var list = new StackPanel();
+            list.Children.Add(new TextBlock { Text = L.T("其他设备可以连接的端口"), FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Th.Fg, Margin = new Thickness(0, 0, 0, 10) });
+            if (exposure.Wide) list.Children.Add(new TextBlock { Text = L.T("Windows 防火墙没有过滤此网络"), FontSize = 13, Foreground = Th.Bad, Margin = new Thickness(0, 0, 0, 10) });
+            foreach (var it in exposure.Items)
+            {
+                bool funnel = it.Share != null && it.Share.Public;
+                var name = Kit.Text(it.Name, 14, Th.Fg);
+                name.Margin = new Thickness(0, 0, 12, 0);
+                // 端口多的（Windows 系统服务那一堆）只写前三个，悬停看全部
+                string all = string.Join(", ", it.Ports);
+                var ports = Kit.Mono(funnel ? L.T("公开到互联网") + " · " + it.Ports[0] : it.Ports.Count > 4 ? string.Join(", ", it.Ports.Take(3)) + " +" + (it.Ports.Count - 3) : all, 12.5, funnel ? Th.Bad : Th.Mute);
+                list.Children.Add(new Border
+                {
+                    Height = 40, BorderBrush = Th.Hair, BorderThickness = new Thickness(0, 1, 0, 0), Background = Brushes.Transparent, Child = Ui.Columns(0, name, ports),
+                    ToolTip = Ui.Tip(Th, it.Share != null ? it.Share.Url : it.Path + "\n" + all)
+                });
+            }
+            var go = Kit.Button(Th, L.T("前往设置"), false, () => { openList.IsOpen = false; Host.ShowPage("settings"); });
+            go.Margin = new Thickness(0, 14, 0, 0);
+            list.Children.Add(go);
+            return list;
+        }
+
         // ---------- 小工具 ----------
 
-        static string City(string code)
+        public static string City(string code)
         {
             string name;
             return Cities.TryGetValue(code ?? "", out name) ? L.T(name) : (code ?? "").ToUpperInvariant();
@@ -887,6 +1265,42 @@ namespace TailOrbit
         static void Open(string url)
         {
             Ui.Launch(() => Process.Start(url));
+        }
+    }
+
+    // 设备卡片上近 24 小时的延迟：横着是时间、竖着是毫秒；直连实线、经中继虚线，前后隔了 10 分钟以上就断开（没在通信、离线），孤零零的一次画个点
+    class Trend : FrameworkElement
+    {
+        readonly List<NetLog.Sample> points;
+        readonly Pen solid, dashed, floor;
+        readonly Brush dot;
+
+        public Trend(Theme th, List<NetLog.Sample> samples)
+        {
+            points = samples;
+            solid = new Pen(th.Fg, 1.6) { LineJoin = PenLineJoin.Round, StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+            dashed = new Pen(th.Mute, 1.6) { DashStyle = new DashStyle(new double[] { 2, 2 }, 0), StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+            floor = new Pen(th.Hair, 1);
+            dot = th.Fg;
+            foreach (var p in new[] { solid, dashed, floor }) p.Freeze();
+        }
+
+        protected override void OnRender(DrawingContext dc)
+        {
+            double w = ActualWidth, h = ActualHeight;
+            dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, w, h));   // 整块都能悬停出说明
+            dc.DrawLine(floor, new Point(0, h - 0.5), new Point(w, h - 0.5));
+            if (points.Count == 0) return;
+            double top = Math.Max(20, points.Max(x => x.Ms)) * 1.12;
+            var end = DateTime.UtcNow;
+            Func<NetLog.Sample, Point> at = s => new Point(Math.Max(0, Math.Min(w, w - (end - s.At).TotalHours / 24 * w)), h - 3 - (h - 10) * s.Ms / top);
+            for (int i = 0; i < points.Count; i++)
+            {
+                bool before = i > 0 && (points[i].At - points[i - 1].At).TotalMinutes <= 10;
+                bool after = i + 1 < points.Count && (points[i + 1].At - points[i].At).TotalMinutes <= 10;
+                if (before) dc.DrawLine(points[i].Link == "d" ? solid : dashed, at(points[i - 1]), at(points[i]));
+                if (!before && !after) dc.DrawEllipse(dot, null, at(points[i]), 1.8, 1.8);
+            }
         }
     }
 
