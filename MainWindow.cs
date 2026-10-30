@@ -529,16 +529,19 @@ namespace TailOrbit
             else if (!show) stateBox.Visibility = Visibility.Collapsed;
         }
 
-        // 本机下面那个按钮：断开着就连上，没登录就去浏览器登录，等批准就打开管理控制台
+        // 本机下面那个按钮：断开着就连上，没登录就去浏览器登录，等批准就打开管理控制台。
+        // 只有连接要等它做完；登录要等的是浏览器那边，按钮写“正在等待登录…”，再点一下是重新打开登录网页
         async void FixState()
         {
             if (stateBusy || stateFor == null) return;
-            stateBusy = true;
-            if (stateFor == "Stopped") ((TextBlock)stateButton.Child).Text = L.T("正在连接…");
-            string why = await Account.Fix(stateFor);
+            string state = stateFor;
+            if (state == "Stopped") { stateBusy = true; ((TextBlock)stateButton.Child).Text = L.T("正在连接…"); }
+            var job = Account.Fix(state);
+            if (Account.Signing) ((TextBlock)stateButton.Child).Text = L.T("正在等待登录…");
+            string why = await job;
             stateBusy = false;
             Reload();
-            if (!string.IsNullOrEmpty(why)) host.Notify(stateFor == "Stopped" ? L.T("连接失败") : L.T("登录失败"), why);
+            if (!string.IsNullOrEmpty(why)) host.Notify(state == "Stopped" ? L.T("连接失败") : L.T("登录失败"), why);
         }
 
         // 连上、断开、换了账号（托盘菜单、设置页、别处的 Tailscale 改的）：星网马上跟着变，不等下一次定时刷新

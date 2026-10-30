@@ -224,14 +224,21 @@ namespace TailOrbit
         }
 
         // 把收件箱里收完的文件都取到 dir（tailscale file get）：重名的另起一个带编号的名字（a (1).txt），不覆盖、不丢。
-        // 返回放下的文件（按 --verbose 打出来的“wrote a.txt as …\a (1).txt (12 bytes)”）；取不出来的留在收件箱里，下次再取
+        // 返回放下的文件（按 --verbose 打出来的“wrote a.txt as …\a (1).txt (12 bytes)”）；取不出来的留在收件箱里，下次再取。
+        // 一次只跑一个：它是先复制、复制完才从收件箱删，两批前后脚收完时两个同时跑会把同一个文件各取一份。
+        // 也不放进 TailOrbit 退出就跟着结束的那一组：正复制大文件时退出，“下载”里会留下半截
+        static readonly object getting = new object();
+
         public static List<string> Fetch(string dir)
         {
             string arg = dir.EndsWith("\\") ? dir + "\\" : dir;   // 放在盘根上的“下载”：结尾的 \ 得双写，不然把后面的引号转义了
             var moved = new List<string>();
             CmdResult r;
-            try { r = Tailscale.Run("file get --conflict=rename --verbose \"" + arg + "\"", 10 * 60 * 1000); }
-            catch (Win32Exception) { return moved; }   // 刚好在更新、卸载 Tailscale
+            lock (getting)
+            {
+                try { r = Tailscale.Run("file get --conflict=rename --verbose \"" + arg + "\""); }
+                catch (Win32Exception) { return moved; }   // 刚好在更新、卸载 Tailscale
+            }
             foreach (var line in (r.Out + "\n" + r.Err).Split('\n').Select(l => l.TrimEnd('\r')))
             {
                 int at = line.IndexOf(" as " + dir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase), end = line.LastIndexOf(" (", StringComparison.Ordinal);

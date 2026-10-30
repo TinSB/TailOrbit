@@ -170,7 +170,7 @@ namespace TailOrbit
         public static string Connect()
         {
             Quiet();
-            var r = Tailscale.Run("up", 30000);
+            var r = Run("up");
             Poke();
             return r.Code == 0 || r.Code == -1 ? null : Tailscale.FirstLine(r.Err, L.T("连接失败"));
         }
@@ -178,9 +178,17 @@ namespace TailOrbit
         public static string Disconnect()
         {
             Quiet();
-            var r = Tailscale.Run("down", 30000);
+            var r = Run("down");
             Poke();
             return r.Code == 0 ? null : Tailscale.FirstLine(r.Err, L.T("断开失败"));
+        }
+
+        // up、down、switch、logout：等它做完，最多 30 秒。Tailscale 正在更新、一时找不到 tailscale.exe 也当成失败说出来，
+        // 不往外抛（不然点的那个按钮一直停在“正在…”）
+        static CmdResult Run(string args)
+        {
+            try { return Tailscale.Run(args, 30000); }
+            catch (Win32Exception) { return new CmdResult { Code = 1, Out = "", Err = L.T("未安装 Tailscale") }; }
         }
 
         // 自己刚连接、断开、换账号、退出登录：这一会儿状态来回变，不当成别人干的去提醒
@@ -261,7 +269,7 @@ namespace TailOrbit
                 // 出错时原因在最后一行（前面是打出来的网址）
                 string last = err.ToString().Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0 && !l.Contains("https://") && !l.StartsWith("To authenticate"));
                 string why = cancel ? "" : !done ? L.T("登录超时，请重试。") : p.ExitCode == 0 ? null : last ?? L.T("登录失败");
-                if (why != null && back != null) Tailscale.Run("switch " + back, 30000);
+                if (why != null && back != null) Run("switch " + back);
                 return why;
             }
         }
@@ -272,7 +280,8 @@ namespace TailOrbit
             catch (InvalidOperationException) { }
         }
 
-        // 重新登录当前账号：叫 Tailscale 去要登录网址（和它自己托盘上的“登录”一样），网址出现在 status 里就打开
+        // 重新登录当前账号：叫 Tailscale 去要登录网址（和它自己托盘上的“登录”一样），网址出现在 status 里就打开。
+        // 只打开 https 网址：这串字是控制服务器给的，不是网址的不交给系统去“打开”
         static string Reauth()
         {
             string before = Read().AuthUrl;
@@ -284,7 +293,7 @@ namespace TailOrbit
                 Thread.Sleep(500);
                 var s = Read();
                 if (s.Backend == "Running") return null;
-                if (url == null && s.AuthUrl != "" && (s.AuthUrl != before || i >= 6)) { url = s.AuthUrl; Browse(url); }
+                if (url == null && s.AuthUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) && (s.AuthUrl != before || i >= 6)) { url = s.AuthUrl; Browse(url); }
                 if (url == null && i >= 60) return L.T("没有拿到登录网址，请稍后再试。");
             }
             return cancel ? "" : L.T("登录超时，请重试。");
@@ -315,7 +324,7 @@ namespace TailOrbit
         {
             if (!Regex.IsMatch(id, "^[A-Za-z0-9]+$")) return L.T("切换失败");
             Quiet();
-            var r = Tailscale.Run("switch " + id, 30000);
+            var r = Run("switch " + id);
             Poke();
             return r.Code == 0 ? null : Tailscale.FirstLine(r.Err, Tailscale.FirstLine(r.Out, L.T("切换失败")));
         }
@@ -324,7 +333,7 @@ namespace TailOrbit
         public static string Logout()
         {
             Quiet();
-            var r = Tailscale.Run("logout", 30000);
+            var r = Run("logout");
             Poke();
             return r.Code == 0 ? null : Tailscale.FirstLine(r.Err, L.T("退出登录失败"));
         }
@@ -354,10 +363,11 @@ namespace TailOrbit
             foreach (var x in issues) if (woke || !since.ContainsKey(x)) since[x] = at;
             if (was == null || woke || s.Ipn) return;
             bool quiet = Signing || at < quietUntil;
-            if (s.Backend == "NeedsLogin" && !loginTold && !quiet)
+            // 自己刚退出登录、取消登录、换到要登录的账号（quiet 里看到的）：当成已经知道了，那一分钟过去也不再弹
+            if (s.Backend == "NeedsLogin" && !loginTold)
             {
                 loginTold = true;
-                host.Notify(s.HaveKey ? L.T("Tailscale 登录已过期") : L.T("Tailscale 需要登录"), L.T("点此在浏览器中登录。"), false, () => Do(() => SignIn(false)));
+                if (!quiet) host.Notify(s.HaveKey ? L.T("Tailscale 登录已过期") : L.T("Tailscale 需要登录"), L.T("点此在浏览器中登录。"), false, () => Do(() => SignIn(false)));
             }
             if (was.Backend == "Running" && !quiet)
             {

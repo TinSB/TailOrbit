@@ -100,10 +100,12 @@ namespace TailOrbit
             }
         }
 
-        // 交给已经开着的那个：发到它收热键的那个隐藏窗口（sink 是窗口名），一行一个路径
+        // 交给已经开着的那个：发到它收热键的那个隐藏窗口（sink 是窗口名），一行一个路径。
+        // 它刚启动、窗口还没建好（开机自启的头一两秒）就隔一会儿再找，最多等 5 秒
         static void Hand(string sink, List<string> paths)
         {
-            IntPtr w = FindWindowEx(new IntPtr(-3), IntPtr.Zero, null, sink);   // HWND_MESSAGE 下面的
+            IntPtr w = IntPtr.Zero;
+            for (int i = 0; i < 50 && (w = FindWindowEx(new IntPtr(-3), IntPtr.Zero, null, sink)) == IntPtr.Zero; i++) Thread.Sleep(100);   // HWND_MESSAGE 下面的
             if (w == IntPtr.Zero) return;
             string text = string.Join("\n", paths);
             var data = new CopyData { Tag = new IntPtr(SendTag), Size = text.Length * 2, Data = Marshal.StringToHGlobalUni(text) };

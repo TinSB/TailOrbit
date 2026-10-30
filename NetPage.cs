@@ -415,13 +415,15 @@ namespace TailOrbit
             Ui.AnimFrom(offBox, OpacityProperty, 0, 1, 300);
         }
 
+        // 和星网上那个一样：只有连接要等它做完，登录中再点一下是重新打开登录网页
         async void FixState()
         {
             if (offBusy || offFor == null) return;
-            offBusy = true;
             string state = offFor;
-            if (state == "Stopped") ((TextBlock)offButton.Child).Text = L.T("正在连接…");
-            string why = await Account.Fix(state);
+            if (state == "Stopped") { offBusy = true; ((TextBlock)offButton.Child).Text = L.T("正在连接…"); }
+            var job = Account.Fix(state);
+            if (Account.Signing) ((TextBlock)offButton.Child).Text = L.T("正在等待登录…");
+            string why = await job;
             offBusy = false;
             Poll();
             if (!string.IsNullOrEmpty(why)) Host.Notify(state == "Stopped" ? L.T("连接失败") : L.T("登录失败"), why);

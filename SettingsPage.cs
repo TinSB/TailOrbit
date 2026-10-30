@@ -766,7 +766,7 @@ namespace TailOrbit
             if (profiles == null) accountBody.Children.Add(Note(L.T("正在读取…"), Th.Mute));
             else foreach (var p in profiles) accountBody.Children.Add(ProfileRow(p));
             if (profiles != null && profiles.Count > 0) accountBody.Children.Add(new Border { Height = 1, Background = Th.Hair, Margin = new Thickness(8, 4, 8, 4) });
-            bool none = profiles != null && profiles.Count == 0;
+            bool none = profiles != null && profiles.Count == 0 && accountError == null;   // 读不出列表不算没登录
             accountBody.Children.Add(MenuRow("plus", Account.Signing ? L.T("正在等待登录…") : none ? L.T("登录") : L.T("添加账号"), Th.Fg, AddAccount));
             if (!none) accountBody.Children.Add(MenuRow("exit", outArmed ? L.T("确认退出登录") : L.T("退出登录"), Th.Bad, SignOut));
             if (outArmed) accountBody.Children.Add(Note(L.T("这台电脑会离开 Tailscale 网络：文件分享、剪贴板互通和手机收听都会停，要重新登录才能回来。"), Th.Mute));
@@ -821,7 +821,7 @@ namespace TailOrbit
         // 添加账号：去浏览器登录另一个账号，这台电脑换到它（没登录上就换回原来那个）。正在等登录时再点是重新打开那个网页
         async void AddAccount()
         {
-            bool none = profiles != null && profiles.Count == 0;
+            bool none = profiles != null && profiles.Count == 0 && accountError == null;
             accountPop.IsOpen = false;
             string why = await Account.SignIn(!none && !Account.Signing);
             if (!string.IsNullOrEmpty(why)) Host.Notify(none ? L.T("登录失败") : L.T("添加账号失败"), why);

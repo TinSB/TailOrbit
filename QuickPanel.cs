@@ -168,7 +168,7 @@ namespace TailOrbit
                 if (n != loads || job != null) return;
                 if (t.IsFaulted) { devices = new List<Device>(); Missing(); return; }
                 var snap = t.Result;
-                if (snap.Error != null) { devices = snap.Devices; Message(snap.Error, true); return; }
+                if (snap.Error != null) { devices = snap.Devices; Message(snap.Error, !snap.Calm); return; }   // 断开了、没登录不画成出错
                 if (snap.Devices.Count == 0) { devices = snap.Devices; Message(L.T("没有可接收文件的设备"), false); return; }
                 bool same = snap.Devices.Select(d => d.Key).SequenceEqual(devices.Select(d => d.Key)) && rows.Count == snap.Devices.Count;
                 bool wasEmpty = rows.Count == 0;
