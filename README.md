@@ -31,19 +31,28 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 - 把文件拖进窗口，对准一台设备松手；
 - 点一台设备，选「发送文件」；
-- 在资源管理器里选中文件，按 `Ctrl+Alt+A`，再按设备前面的数字键。
+- 在资源管理器里选中文件，按 `Ctrl+Alt+A`（或者右键 →「发送到」→「TailOrbit」，Windows 11 在「显示更多选项」里），再按设备前面的数字键。
 
 文件夹会先打成 zip 再发。发送时设备外面转一圈进度，鼠标移上去会出现 ×，点了就取消；送到了设备变绿打勾，失败了连线变红。
 
 离线的设备也能发。照样拖上去（或者点它选「发送文件」、在 `Ctrl+Alt+A` 里按它的数字），文件会先排着，设备旁边多一颗绕着它转的小卫星。等它上线，比如合着的笔记本打开了，TailOrbit 自动发过去：卫星落进设备，接着就是平常的发送。TailOrbit 只记文件在哪、不另存一份，所以发出去的是那时候的最新版本；文件要是被挪走或删了，这一批就记成没送到。不想发了，点那台设备选「取消发送」。排着的文件重启后还在，只是对方上线时这台电脑得开着、TailOrbit 也在运行。
 
-别人发文件过来时，光点会从那台设备流进中间。收好的文件出现在左下角，点一下就在资源管理器里找到它，拖到别的设备上还能接着发。
+别人发文件过来时，光点会从那台设备流进中间。收好的文件出现在左下角，点一下就在资源管理器里找到它，拖到别的设备上还能接着发。收到的文件放在「下载」里：平常是 Tailscale 自己的托盘程序放过去的；它没开着时由 TailOrbit 来放，同名的文件不会被覆盖，新来的会叫「名字 (1)」，放好后弹个通知。
 
 ### 点一下设备
 
-点一台设备，四周会弹出一圈按钮：开终端（用你在 `~/.ssh/config` 里给它起的别名）、发文件、复制域名、在浏览器里打开它的网页（它开着网页端口才有）、读它的剪贴板（只有 Mac 有），还有「离线时提醒我」：打开后，它掉线和恢复时 Windows 都会弹个通知。
+点一台设备，四周会弹出一圈按钮：开终端（用你在 `~/.ssh/config` 里给它起的别名）、远程桌面（只有 Windows 设备有，对方要开着远程桌面）、发文件、复制域名、在浏览器里打开它的网页（它开着网页端口才有）、读它的剪贴板（只有 Mac 有），还有「离线时提醒我」：打开后，它掉线和恢复时 Windows 都会弹个通知。
 
-点设备的名字会复制它的 IP；点中间这台电脑会打开「下载」文件夹，Tailscale 收到的文件都放在那里。关掉窗口只是缩回托盘。右键托盘图标是一个小菜单：「发送文件」「已接收的文件」（找到最近收到的那个）、「终端」（指着它列出能连的设备），两个剪贴板开关也在这里，最下面是「退出」。
+点设备的名字会复制它的 IP；点中间这台电脑会打开「下载」文件夹，Tailscale 收到的文件都放在那里。关掉窗口只是缩回托盘。右键托盘图标是一个小菜单：最上面是「连接 Tailscale」的开关，下面是「打开主界面」「发送文件」「已接收的文件」（找到最近收到的那个）、「终端」（指着它列出能连的设备），两个剪贴板开关也在这里，最下面是「退出」。
+
+### 连接和账号
+
+TailOrbit 可以代替 Tailscale 自己的托盘图标：
+
+- **连接、断开**：托盘菜单最上面的开关，或者「设置」页左边「状态」那一行。断开以后星网和「网络」页会写「已断开」，点「连接」就连回来，设置都不变。
+- **登录**：没登录、或者这台电脑的密钥过期了，那个开关会换成「登录 Tailscale」「重新登录 Tailscale」，点了用浏览器打开 Tailscale 的登录页，登录好就自动连上。重新登录还是原来的账号，之前的设置都还在。
+- **换账号**：点「设置」页的「账号」，列出这台电脑登录过的账号，当前的打着勾，点别的就换过去；也可以「添加账号」（登录另一个账号，没登录完就换回原来那个），或者「退出登录」。退出登录会让这台电脑离开 Tailscale 网络，分享、剪贴板互通和收听都会停，所以要再点一下确认。
+- **提醒**：Tailscale 自己的托盘程序没开着时，TailOrbit 替它弹通知：需要登录了、这台电脑的密钥 7 天内到期（一天最多一次）、Tailscale 报的问题持续了一分钟以上（同一条只报一次）、Tailscale 被断开或者它的后台服务停了。它的托盘程序开着就不重复弹。
 
 ### 剪贴板
 
@@ -88,13 +97,13 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 - **分享**：把文件或文件夹拖进来，会生成一个只有你自己的设备能打开的链接和二维码；需要的话可以公开到互联网 15 分钟、1 小时或 1 天，时间到了自动关。你用 `tailscale serve`、`funnel` 挂着的东西也都在这页，背后的程序停了会标红。
 - **云盘**：就是 Tailscale 的 Taildrive。还没开通的话点「立即开通」，照提示在 Tailscale 后台生成一把令牌、点 Copy，TailOrbit 会替你在访问规则里加上需要的两条，用完马上把这把令牌作废。不想交出令牌也行，点「手动修改访问控制」，要加的内容已经替你复制好了。开通以后，把文件夹拖进来就共享给了自己的其他设备，别的设备共享的文件夹也能直接打开。
-- **设置**：左边是这台电脑在 Tailscale 里的名字、地址、账号和 Tailscale 版本。点名字就能改名；这台电脑要是在管理控制台里改过名，得连着管理接口才改得动。开着剪贴板互通或收听本机声音时，手机上存的网址会跟着名字变，所以会先提醒一次，再按一次 Enter 才改。有新版本时下面会出现「更新 Tailscale 到 …」，点一下、在管理员确认里点「是」就装好。右边从上往下是出口节点（Tailscale 推荐的那台标着「推荐」）、Tailscale 的常用开关和「网络」里说的管理接口、界面用浅色深色还是跟随系统、「开机时自动启动」、界面语言和「连接变差时提醒」、上面说的两个剪贴板开关和收听本机声音，最后是检查更新。常用开关里的「允许其他设备通过本机访问局域网」会把这台电脑所在的局域网（比如家里的路由器、打印机）共享给你的其他设备，要在管理控制台批准一次，连着管理接口的话 TailOrbit 会顺手批准。出口节点可以设成「在不信任的网络上自动使用」：连上咖啡店、机场这类网络时自动改走你选的设备；把家里、公司的网络设成「信任」，回到这些网络时它自己关掉。
+- **设置**：左边是这台电脑在 Tailscale 里的名字、地址、连接状态、账号和 Tailscale 版本。点名字就能改名；这台电脑要是在管理控制台里改过名，得连着管理接口才改得动。开着剪贴板互通或收听本机声音时，手机上存的网址会跟着名字变，所以会先提醒一次，再按一次 Enter 才改。有新版本时下面会出现「更新 Tailscale 到 …」，点一下、在管理员确认里点「是」就装好。右边从上往下是出口节点（Tailscale 推荐的那台标着「推荐」）、Tailscale 的常用开关和「网络」里说的管理接口、界面用浅色深色还是跟随系统、「开机时自动启动」、界面语言和「连接变差时提醒」、上面说的两个剪贴板开关和收听本机声音，最后是检查更新。常用开关里的「允许其他设备通过本机访问局域网」会把这台电脑所在的局域网（比如家里的路由器、打印机）共享给你的其他设备，要在管理控制台批准一次，连着管理接口的话 TailOrbit 会顺手批准。出口节点可以设成「在不信任的网络上自动使用」：连上咖啡店、机场这类网络时自动改走你选的设备；把家里、公司的网络设成「信任」，回到这些网络时它自己关掉。
 
 ### 安装
 
 需要 Windows 10（1903 或更新）或 Windows 11。用的是系统自带的 .NET Framework 4.8，不用另装运行库。
 
-到 [Releases](https://github.com/TinSB/TailOrbit/releases) 下载最新的 `TailOrbit-Setup-版本号.exe`，双击，点「安装」。不用管理员权限，程序装在 `%LOCALAPPDATA%\Programs\TailOrbit`，开始菜单里会有它，「开机时自动启动」默认打开。
+到 [Releases](https://github.com/TinSB/TailOrbit/releases) 下载最新的 `TailOrbit-Setup-版本号.exe`，双击，点「安装」。不用管理员权限，程序装在 `%LOCALAPPDATA%\Programs\TailOrbit`，开始菜单和资源管理器右键的「发送到」里会有它，「开机时自动启动」默认打开。
 
 电脑上还没装 Tailscale 的话，安装窗口里会多一个「同时安装 Tailscale」（默认打开）：TailOrbit 装好后从 Tailscale 官网下载对应处理器的安装包，确认是 Tailscale Inc. 签名、签名有效，再交给 Windows 安装（会弹一次管理员确认），装完打开 Tailscale 让你登录。这一步没装上也不影响 TailOrbit，主界面上同样有「安装 Tailscale」按钮。
 
@@ -104,7 +113,7 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 ### 卸载
 
-在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享、剪贴板互通和收听本机声音会一起撤掉；设置、收发记录和管理接口的令牌默认留着，打开「同时删除设置和传输记录」就一起删。令牌不再用的话，记得到 Tailscale 后台的 Keys 页面把它作废。
+在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享、剪贴板互通和收听本机声音会一起撤掉，开始菜单和「发送到」里的那一项也删掉；设置、收发记录和管理接口的令牌默认留着，打开「同时删除设置和传输记录」就一起删。令牌不再用的话，记得到 Tailscale 后台的 Keys 页面把它作废。
 
 ### 自己编译
 
@@ -117,7 +126,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 .\TailOrbit.exe
 ```
 
-用 `TailOrbit.exe --tray` 启动就只待在托盘里，「开机时自动启动」就是这么启动的。程序同时只会开一个，再运行一次只会把已经开着的窗口叫到前面。
+用 `TailOrbit.exe --tray` 启动就只待在托盘里，「开机时自动启动」就是这么启动的。程序同时只会开一个，再运行一次只会把已经开着的窗口叫到前面；`TailOrbit.exe --send 文件…` 会带着这些文件弹出快捷面板（「发送到」就是这么启动的）。
 
 `.\release.ps1` 打出 `dist\TailOrbit-Setup-版本号.exe`。安装程序加 `--quiet` 就不弹窗口直接装好（装好后待在托盘里，再加 `--open` 就打开主界面）；`TailOrbit.exe --uninstall --quiet` 不弹窗口卸载，再加 `--purge` 连设置和记录一起删。
 
@@ -129,7 +138,7 @@ iPhone App 在 `ios/` 里，要一台装了 Xcode 和 [XcodeGen](https://github.
 
 TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有四处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；连了管理接口的话，连上时核对一次令牌，之后只在你点「批准」「关闭到期」「删除」或改名时访问同一个后台接口（`api.tailscale.com`）；没装 Tailscale、你点了安装，或者你点了更新 Tailscale 时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包；检查更新时会访问 GitHub（`api.github.com` 和它的下载地址）。「自动下载更新」默认关着，不打开的话只有你点「检查更新」时才会连。
 
-收发记录、排着要发的文件清单、分享列表、每分钟的流量和延迟记录、设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传；管理接口的令牌也存在这里，用 Windows 加密过，只有你这个 Windows 账号解得开。剪贴板的内容和传给手机的声音不记录。查哪些端口连得进来，只是在本机读正在监听的端口、对应的程序和防火墙规则，不会去连谁。
+收发记录、排着要发的文件清单、分享列表、每分钟的流量和延迟记录、设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传；管理接口的令牌也存在这里，用 Windows 加密过，只有你这个 Windows 账号解得开。剪贴板的内容和传给手机的声音不记录。查哪些端口连得进来，只是在本机读正在监听的端口、对应的程序和防火墙规则，不会去连谁。登录 Tailscale 是在你的默认浏览器里登，TailOrbit 只是把 Tailscale 给的登录网址交给浏览器，碰不到你的账号密码。
 
 <details>
 <summary>具体调了哪些命令</summary>
@@ -139,7 +148,13 @@ TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做�
 | 列出能收文件的设备 | `tailscale file cp --targets`、`tailscale status --json` |
 | 判断直连还是中继 | `tailscale ping` |
 | 发文件、看收发进度 | `tailscale file cp`；进度来自 `tailscale debug watch-ipn` |
+| 把收到的文件放进「下载」 | Windows 上收到的文件先留在 Tailscale 的收件箱里，平常由它自己的托盘程序（`tailscale-ipn`）取走；它没开着时，一批收完、以及 TailOrbit 启动时，用 `tailscale file get --conflict=rename "<下载文件夹>"` 取出来，同名的另起名字，不覆盖 |
 | 等离线的设备上线 | 有排着的文件时每 15 秒看一次 `tailscale file cp --targets`，对方在线了照常用 `tailscale file cp` 发 |
+| 连接、断开 | 连接是不带参数的 `tailscale up`（只把网络重新打开，不改设置），断开是 `tailscale down` |
+| 登录、账号 | 没登录过、添加账号用 `tailscale login`；密钥过期后重新登录当前账号用 `tailscale debug localapi POST login-interactive`（在 Tailscale 自己的托盘程序里点登录，发的也是这个请求，设置都不动）。两种都会用默认浏览器打开 Tailscale 给的登录网址，等它连上。换账号是 `tailscale switch`，账号列表来自 `tailscale switch --list --json`，退出登录是 `tailscale logout` |
+| 替 Tailscale 提醒 | TailOrbit 开着时每 10 秒读一次 `tailscale status --json`（状态、密钥到期时间、Tailscale 报的问题），再看 Tailscale 自己的托盘程序开没开着；开着就不弹 |
+| 资源管理器右键「发送到」 | 安装时在你自己的「发送到」文件夹（`%APPDATA%\Microsoft\Windows\SendTo`）里放一个 `TailOrbit.lnk`，卸载时删掉；不写注册表、不用管理员权限。选中的文件跟在 `--send` 后面，开着的 TailOrbit 接过去弹出快捷面板 |
+| 设备菜单里的「远程桌面」 | 用 Windows 自带的 `mstsc /v:<设备在 Tailscale 里的名字>` |
 | 分享 | `tailscale serve`、`tailscale funnel`；文件由 TailOrbit 在 `127.0.0.1` 上开的小服务提供，Tailscale 只负责转发 |
 | 网络检测、流量 | `tailscale netcheck`、`tailscale metrics print` |
 | 流量和延迟记录 | TailOrbit 开着时每分钟读一次 `tailscale status --json`，正在通信的设备再 `tailscale ping` 一次，按天记在 `%LOCALAPPDATA%\TailOrbit\net\` 里；只往后加，不删也不上传 |
@@ -180,19 +195,28 @@ There are three ways to send:
 
 - drag files into the window and drop them on a device;
 - click a device and choose **Send files**;
-- select files in File Explorer, press `Ctrl+Alt+A`, then press the number shown next to a device.
+- select files in File Explorer, press `Ctrl+Alt+A` (or right-click → **Send to** → **TailOrbit**; on Windows 11 it's under **Show more options**), then press the number shown next to a device.
 
 Folders get zipped first. While a file is on its way, a progress ring runs around the device; hover it and click the × to cancel. The device turns green when the file arrives, and the line turns red if it fails.
 
 Offline devices can receive too. Drop files on one (or click it and choose **Send files**, or press its number in the `Ctrl+Alt+A` panel) and they wait in line, shown as a small satellite circling the device. When the device comes back online, say when you open a closed laptop, TailOrbit sends them automatically: the satellite drops into the device and the usual send begins. TailOrbit only remembers where the files are and doesn't copy them, so whatever is there at that moment is what gets sent; if a file was moved or deleted, that batch is marked as failed. Changed your mind? Click the device and choose **Cancel sending**. Waiting files survive a restart, but this PC has to be on, with TailOrbit running, when the other device comes online.
 
-When someone sends you a file, dots flow from their device into the middle. Received files show up at the bottom left: click one to find it in File Explorer, or drag it onto another device to pass it on.
+When someone sends you a file, dots flow from their device into the middle. Received files show up at the bottom left: click one to find it in File Explorer, or drag it onto another device to pass it on. They land in Downloads: usually Tailscale's own tray app puts them there, and when it isn't running TailOrbit does it instead, without overwriting a file that has the same name (the new one becomes "name (1)"), and lets you know with a notification.
 
 ### Clicking a device
 
-Click a device and a ring of buttons pops out around it: open a terminal (with the alias you gave it in `~/.ssh/config`), send files, copy its DNS name, open its web page (only when it has a web port open), read its clipboard (Macs only), and **Alert me when offline**, which makes Windows notify you when that device drops off and when it comes back.
+Click a device and a ring of buttons pops out around it: open a terminal (with the alias you gave it in `~/.ssh/config`), Remote Desktop (Windows devices only, and that device needs Remote Desktop turned on), send files, copy its DNS name, open its web page (only when it has a web port open), read its clipboard (Macs only), and **Alert me when offline**, which makes Windows notify you when that device drops off and when it comes back.
 
-Click a device's name to copy its IP. Click this PC in the middle to open Downloads, where Tailscale puts the files you receive. Closing the window only hides it in the tray. Right-click the tray icon for a small menu: **Send files**, **Received files** (shows the last file you received), **Terminal** (point at it to pick a device), the two clipboard switches, and **Exit** at the bottom.
+Click a device's name to copy its IP. Click this PC in the middle to open Downloads, where Tailscale puts the files you receive. Closing the window only hides it in the tray. Right-click the tray icon for a small menu: the **Connect to Tailscale** switch at the top, then **Open TailOrbit**, **Send files**, **Received files** (shows the last file you received), **Terminal** (point at it to pick a device), the two clipboard switches, and **Exit** at the bottom.
+
+### Connection and accounts
+
+TailOrbit can stand in for Tailscale's own tray icon:
+
+- **Connect and disconnect**: the switch at the top of the tray menu, or the **Status** row on the left of the Settings page. While disconnected, the map and the Network page say **Disconnected**; click **Connect** to get back on, with all your settings as they were.
+- **Sign in**: if this PC isn't signed in, or its key has expired, that switch becomes **Sign in to Tailscale** or **Sign in to Tailscale again**. Click it and Tailscale's sign-in page opens in your browser; once you've signed in, it connects by itself. Signing in again keeps the same account and all your settings.
+- **Switch accounts**: click **Account** on the Settings page to see the accounts signed in on this PC, with a check next to the current one; click another to switch to it. You can also **Add account** (sign in to another account; if you don't finish, it switches back) or **Sign out**. Signing out takes this PC off your Tailscale network and stops shares, the shared clipboard and phone listening, so it asks for a second click.
+- **Alerts**: when Tailscale's own tray app isn't running, TailOrbit shows its notifications for it: you need to sign in, this PC's key expires within 7 days (at most once a day), Tailscale has reported a problem for more than a minute (each one only once), or Tailscale was disconnected or its background service stopped. When its tray app is running, TailOrbit doesn't repeat them.
 
 ### Clipboard
 
@@ -237,13 +261,13 @@ At the bottom is traffic for this session, today, the last 7 days or the last 30
 
 - **Share**: drop a file or folder here to get a link and QR code that only your devices can open. If you need to, make it public on the internet for 15 minutes, an hour or a day; it closes itself when time is up. Anything you already serve with `tailscale serve` or `funnel` shows up here too, and turns red if the program behind it has stopped.
 - **Drive**: Tailscale's Taildrive. If it isn't set up yet, click **Enable Drive**, generate an access token in the Tailscale admin console when asked, and click Copy. TailOrbit adds the two entries Taildrive needs to your access rules and revokes the token right away. If you'd rather not hand over a token, choose **Edit access controls manually**; the text to paste is already copied for you. Once it's on, drop a folder in to share it with your other devices, and open the folders they share.
-- **Settings**: on the left, this computer's name, addresses, account and Tailscale version on Tailscale. Click the name to rename this PC; if it was renamed in the admin console before, that only works with the Admin API connected. If the shared clipboard or phone listening is on, the addresses saved on your phone change with the name, so it warns you first and renames on a second Enter. When a newer Tailscale is out, **Update Tailscale to …** appears below, and one click plus a Yes in the administrator prompt installs it. On the right, from top to bottom: the exit node (the one Tailscale recommends is marked **Recommended**), common Tailscale switches and the Admin API from **Network**, light, dark or follow Windows, **Start with Windows**, the interface language and **Alert me when connections get worse**, the two clipboard switches, listening on your phone, and checking for updates. One of the Tailscale switches, **Let other devices access the local network through this PC**, shares the local network this PC is on (your router or printer, say) with your other devices; it needs approving once in the admin console, and TailOrbit does that for you when the Admin API is connected. Set the exit node to **Use automatically on untrusted networks** and TailOrbit switches to the device you picked whenever you join a network like a café's or an airport's; mark your home and work networks as trusted and it turns the exit node off again when you're back on them.
+- **Settings**: on the left, this computer's name, addresses, connection status, account and Tailscale version on Tailscale. Click the name to rename this PC; if it was renamed in the admin console before, that only works with the Admin API connected. If the shared clipboard or phone listening is on, the addresses saved on your phone change with the name, so it warns you first and renames on a second Enter. When a newer Tailscale is out, **Update Tailscale to …** appears below, and one click plus a Yes in the administrator prompt installs it. On the right, from top to bottom: the exit node (the one Tailscale recommends is marked **Recommended**), common Tailscale switches and the Admin API from **Network**, light, dark or follow Windows, **Start with Windows**, the interface language and **Alert me when connections get worse**, the two clipboard switches, listening on your phone, and checking for updates. One of the Tailscale switches, **Let other devices access the local network through this PC**, shares the local network this PC is on (your router or printer, say) with your other devices; it needs approving once in the admin console, and TailOrbit does that for you when the Admin API is connected. Set the exit node to **Use automatically on untrusted networks** and TailOrbit switches to the device you picked whenever you join a network like a café's or an airport's; mark your home and work networks as trusted and it turns the exit node off again when you're back on them.
 
 ### Install
 
 You need Windows 10 (1903 or later) or Windows 11. It runs on the .NET Framework 4.8 that comes with Windows, so there's nothing else to install.
 
-Download the latest `TailOrbit-Setup-<version>.exe` from [Releases](https://github.com/TinSB/TailOrbit/releases), double-click it and click **Install**. No admin rights needed: it goes into `%LOCALAPPDATA%\Programs\TailOrbit`, shows up in the Start menu, and starts with Windows unless you turn that off.
+Download the latest `TailOrbit-Setup-<version>.exe` from [Releases](https://github.com/TinSB/TailOrbit/releases), double-click it and click **Install**. No admin rights needed: it goes into `%LOCALAPPDATA%\Programs\TailOrbit`, shows up in the Start menu and in File Explorer's **Send to** menu, and starts with Windows unless you turn that off.
 
 If Tailscale isn't installed yet, the installer adds an **Also install Tailscale** option (on by default). After installing TailOrbit, it downloads the installer for your processor from the official Tailscale website, checks that it carries a valid signature from Tailscale Inc., and hands it to Windows to install (you'll see one administrator prompt), then opens Tailscale so you can sign in. If that step fails, TailOrbit still works, and the main window offers the same **Install Tailscale** button.
 
@@ -253,7 +277,7 @@ To update, click **Check for updates** on the Settings page, then **Update now**
 
 ### Uninstall
 
-In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares, shared clipboard and phone listening it set up in Tailscale are taken down too. Your settings, transfer history and Admin API token are kept unless you turn on **Also delete settings and transfer history**. If you're done with the token, also revoke it on the Keys page of the admin console.
+In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares, shared clipboard and phone listening it set up in Tailscale are taken down too, and its entries in the Start menu and **Send to** are removed. Your settings, transfer history and Admin API token are kept unless you turn on **Also delete settings and transfer history**. If you're done with the token, also revoke it on the Keys page of the admin console.
 
 ### Build it yourself
 
@@ -266,7 +290,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 .\TailOrbit.exe
 ```
 
-Run `TailOrbit.exe --tray` to start in the tray only; that's how **Start with Windows** launches it. Only one copy runs at a time, and launching it again just brings the open window to the front.
+Run `TailOrbit.exe --tray` to start in the tray only; that's how **Start with Windows** launches it. Only one copy runs at a time, and launching it again just brings the open window to the front; `TailOrbit.exe --send <files…>` opens the quick panel with those files (that's how **Send to** launches it).
 
 `.\release.ps1` builds `dist\TailOrbit-Setup-<version>.exe`. Add `--quiet` to the installer to install without any window (it then starts in the tray; add `--open` to open the main window instead); `TailOrbit.exe --uninstall --quiet` removes it the same way, and `--purge` also deletes settings and history.
 
@@ -278,7 +302,7 @@ The iPhone app lives in `ios/` and needs a Mac with Xcode and [XcodeGen](https:/
 
 TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are four exceptions: Drive setup uses the token you give it to call Tailscale's admin API once; with the Admin API connected, TailOrbit checks the token once when you connect, and after that calls the same API (`api.tailscale.com`) only when you click **Approve**, **Disable expiry** or **Delete**, or rename this PC; if you choose to install Tailscale, or to update it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`); and checking for updates contacts GitHub (`api.github.com` and its download servers). **Download updates automatically** is off by default, so unless you turn it on, that only happens when you click **Check for updates**.
 
-Your history, the list of files waiting to be sent, shares, the per-minute traffic and latency records, and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. The Admin API token is kept there too, encrypted by Windows so only your Windows account can read it. Clipboard contents and the sound sent to your phone aren't recorded. Checking which ports other devices can reach only reads the listening ports, their programs and the firewall rules on this PC; it doesn't connect to anything.
+Your history, the list of files waiting to be sent, shares, the per-minute traffic and latency records, and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. The Admin API token is kept there too, encrypted by Windows so only your Windows account can read it. Clipboard contents and the sound sent to your phone aren't recorded. Checking which ports other devices can reach only reads the listening ports, their programs and the firewall rules on this PC; it doesn't connect to anything. Signing in to Tailscale happens in your default browser: TailOrbit only hands it the sign-in address Tailscale gives it, and never sees your password.
 
 <details>
 <summary>What it runs under the hood</summary>
@@ -288,7 +312,13 @@ Your history, the list of files waiting to be sent, shares, the per-minute traff
 | List devices that can receive files | `tailscale file cp --targets`, `tailscale status --json` |
 | Tell direct from relayed | `tailscale ping` |
 | Send files and track progress | `tailscale file cp`; progress comes from `tailscale debug watch-ipn` |
+| Putting received files in Downloads | on Windows, received files wait in Tailscale's inbox and are normally picked up by its own tray app (`tailscale-ipn`); when that isn't running, TailOrbit runs `tailscale file get --conflict=rename "<Downloads>"` after each batch arrives and when it starts, so a file with the same name gets a new name instead of being overwritten |
 | Wait for an offline device | while files are waiting, checks `tailscale file cp --targets` every 15 seconds and sends with `tailscale file cp` once the device is online |
+| Connect and disconnect | connecting runs `tailscale up` with no flags (it only turns the network back on and changes no settings); disconnecting runs `tailscale down` |
+| Sign-in and accounts | signing in for the first time and adding an account run `tailscale login`; signing in again after the key expires runs `tailscale debug localapi POST login-interactive`, the same request Tailscale's own tray app sends when you sign in from it, which leaves your settings alone. Both open the sign-in address Tailscale gives in your default browser and wait until it's connected. Switching accounts runs `tailscale switch`, the account list comes from `tailscale switch --list --json`, and signing out runs `tailscale logout` |
+| Alerts in place of Tailscale's | while TailOrbit runs, it reads `tailscale status --json` every 10 seconds (the state, when the key expires, and any problems Tailscale reports) and checks whether Tailscale's own tray app is running; if it is, TailOrbit stays quiet |
+| **Send to** in File Explorer | installing puts a `TailOrbit.lnk` in your own Send to folder (`%APPDATA%\Microsoft\Windows\SendTo`), and uninstalling deletes it; nothing goes into the registry and no admin rights are needed. The selected files follow `--send`, and the running TailOrbit takes them and opens the quick panel |
+| **Remote Desktop** in the device menu | runs Windows' own `mstsc /v:<the device's Tailscale name>` |
 | Share | `tailscale serve`, `tailscale funnel`; files are served by a small TailOrbit server on `127.0.0.1`, and Tailscale only forwards to it |
 | Network check and traffic | `tailscale netcheck`, `tailscale metrics print` |
 | Traffic and latency history | while TailOrbit runs, reads `tailscale status --json` once a minute and runs `tailscale ping` once for each device that's talking, saving one file per day in `%LOCALAPPDATA%\TailOrbit\net\`; it only ever adds to them and never uploads them |
