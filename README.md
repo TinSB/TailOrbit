@@ -62,7 +62,7 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 不想一直同步的话，也可以只在需要时按 `Win+Alt+V`，把 Mac 剪贴板里的字读到这台电脑上。
 
-剪贴板只在你自己的设备之间走：只有登录同一个 Tailscale 账号的设备能读，不经过 Funnel，也不上互联网，内容不会存到硬盘上。密码也照样能传；在两台电脑之间传时它仍然标着是密码，不会进剪贴板历史。
+剪贴板只在你自己的设备之间走：只有登录同一个 Tailscale 账号的设备能读，不经过 Funnel，也不上互联网，内容不会存到硬盘上。密码也照样能传；在两台电脑之间传时它仍然标着是密码，不会进剪贴板历史。Tailscale 的访问令牌例外：不会同步到 Mac，也不会推到手机上。
 
 ### 用手机听电脑的声音
 
@@ -72,12 +72,23 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 不想每次扫码、点按钮，可以装配套的 iPhone App（在 `ios/`，要用 Mac 自己编译装上，见「自己编译」）。打开一次、允许定位以后，它就在后台等着：手机连着 Wi-Fi、戴着耳机时，电脑一出声就自动从耳机里放出来，手机上正在放的歌只是被压低一点、不会停；电脑安静 8 秒，它就停下、把耳机让出来。摘了耳机、离开 Wi-Fi 就断开，不费电也不耗流量。它也能和电脑共用剪贴板，见「剪贴板」。App 被从后台划掉或手机重启以后，要再打开一次。
 
+### 网络
+
+「网络」页左边是你的设备，标着每台是直连还是中继、延迟多少、现在传得多快。点一台设备会弹出它的卡片：现在走的哪条路、近 24 小时的延迟曲线（实线是直连，虚线是走中继）、近 30 天每天的流量。
+
+右边最上面是要处理的事：Tailscale 报的问题、打不开的分享，还有本机共享的出口节点或局域网还没批准、哪台设备的密钥两周内到期、哪台设备离线超过一周。每条旁边就有「批准」「关闭到期」或「删除」，删除要再点一下确认。
+
+下面是网络检测：UDP 穿透、IPv6、NAT 类型、最近的中继这些，加上 DNS 能不能解析 Tailscale 里的名字，以及这台电脑有哪些端口其他设备连得进来，点开能看到是哪些程序、哪些端口。Windows 防火墙默认不拦从 Tailscale 来的连接，挡人的是管理控制台里的访问规则，所以这里列的是规则放行时其他设备就能连上的东西。
+
+最下面是流量，可以看本次启动、今天、近 7 天或近 30 天，分直连和中继。TailOrbit 每分钟记一次各设备的流量和延迟，记录只存在这台电脑上，所以「今天」和更长的范围从装上这一版才开始有。正在用的设备改走中继、或者延迟比平时高出很多时，会弹个通知；不想要就在「设置」页关掉「连接变差时提醒」。
+
+「批准」「关闭到期」「删除」要先连上管理接口：在「设置」页点「管理接口」，照提示在 Tailscale 后台生成一把访问令牌、点 Copy，TailOrbit 会自己拿走并清空剪贴板。令牌加密存在这台电脑上，只发给 Tailscale，过期了再连一次就行。不用了点「断开」，再到后台的 Keys 页面把它作废。不连也没关系，这些按钮会换成「前往管理控制台」，到网页上自己点。
+
 ### 其他几页
 
 - **分享**：把文件或文件夹拖进来，会生成一个只有你自己的设备能打开的链接和二维码；需要的话可以公开到互联网 15 分钟、1 小时或 1 天，时间到了自动关。你用 `tailscale serve`、`funnel` 挂着的东西也都在这页，背后的程序停了会标红。
-- **网络**：每台设备是直连还是中继、延迟多少、现在传得多快；右边是网络检测和需要处理的问题。
 - **云盘**：就是 Tailscale 的 Taildrive。还没开通的话点「立即开通」，照提示在 Tailscale 后台生成一把令牌、点 Copy，TailOrbit 会替你在访问规则里加上需要的两条，用完马上把这把令牌作废。不想交出令牌也行，点「手动修改访问控制」，要加的内容已经替你复制好了。开通以后，把文件夹拖进来就共享给了自己的其他设备，别的设备共享的文件夹也能直接打开。
-- **设置**：左边是这台电脑在 Tailscale 里的名字、地址、账号和 Tailscale 版本，有新版本时下面会出现「更新 Tailscale 到 …」，点一下、在管理员确认里点「是」就装好；右边从上往下是出口节点、Tailscale 的常用开关、界面用浅色深色还是跟随系统、「开机时自动启动」和界面语言、上面说的两个剪贴板开关和收听本机声音，最后是检查更新。出口节点可以设成「在不信任的网络上自动使用」：连上咖啡店、机场这类网络时自动改走你选的设备；把家里、公司的网络设成「信任」，回到这些网络时它自己关掉。
+- **设置**：左边是这台电脑在 Tailscale 里的名字、地址、账号和 Tailscale 版本。点名字就能改名；这台电脑要是在管理控制台里改过名，得连着管理接口才改得动。开着剪贴板互通或收听本机声音时，手机上存的网址会跟着名字变，所以会先提醒一次，再按一次 Enter 才改。有新版本时下面会出现「更新 Tailscale 到 …」，点一下、在管理员确认里点「是」就装好。右边从上往下是出口节点（Tailscale 推荐的那台标着「推荐」）、Tailscale 的常用开关和「网络」里说的管理接口、界面用浅色深色还是跟随系统、「开机时自动启动」、界面语言和「连接变差时提醒」、上面说的两个剪贴板开关和收听本机声音，最后是检查更新。常用开关里的「允许其他设备通过本机访问局域网」会把这台电脑所在的局域网（比如家里的路由器、打印机）共享给你的其他设备，要在管理控制台批准一次，连着管理接口的话 TailOrbit 会顺手批准。出口节点可以设成「在不信任的网络上自动使用」：连上咖啡店、机场这类网络时自动改走你选的设备；把家里、公司的网络设成「信任」，回到这些网络时它自己关掉。
 
 ### 安装
 
@@ -93,7 +104,7 @@ TailOrbit 是配合 [Tailscale](https://tailscale.com) 用的一个 Windows 小�
 
 ### 卸载
 
-在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享、剪贴板互通和收听本机声音会一起撤掉；设置和收发记录默认留着，打开「同时删除设置和传输记录」就一起删。
+在「设置 → 应用」里找到 TailOrbit，点「卸载」。它在 Tailscale 上挂的分享、剪贴板互通和收听本机声音会一起撤掉；设置、收发记录和管理接口的令牌默认留着，打开「同时删除设置和传输记录」就一起删。令牌不再用的话，记得到 Tailscale 后台的 Keys 页面把它作废。
 
 ### 自己编译
 
@@ -116,9 +127,9 @@ iPhone App 在 `ios/` 里，要一台装了 Xcode 和 [XcodeGen](https://github.
 
 ### 隐私
 
-TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有三处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；没装 Tailscale、你点了安装，或者你点了更新 Tailscale 时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包；检查更新时会访问 GitHub（`api.github.com` 和它的下载地址）。「自动下载更新」默认关着，不打开的话只有你点「检查更新」时才会连。
+TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做的都交给它。例外只有四处：云盘的「立即开通」那一次会拿你给的令牌访问 Tailscale 官方的后台接口；连了管理接口的话，连上时核对一次令牌，之后只在你点「批准」「关闭到期」「删除」或改名时访问同一个后台接口（`api.tailscale.com`）；没装 Tailscale、你点了安装，或者你点了更新 Tailscale 时，会从 Tailscale 官网（`pkgs.tailscale.com`）下载它的安装包；检查更新时会访问 GitHub（`api.github.com` 和它的下载地址）。「自动下载更新」默认关着，不打开的话只有你点「检查更新」时才会连。
 
-收发记录、排着要发的文件清单、分享列表和设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传，剪贴板的内容和传给手机的声音也不记录。
+收发记录、排着要发的文件清单、分享列表、每分钟的流量和延迟记录、设置都只存在这台电脑的 `%LOCALAPPDATA%\TailOrbit\` 里，不会上传；管理接口的令牌也存在这里，用 Windows 加密过，只有你这个 Windows 账号解得开。剪贴板的内容和传给手机的声音不记录。查哪些端口连得进来，只是在本机读正在监听的端口、对应的程序和防火墙规则，不会去连谁。
 
 <details>
 <summary>具体调了哪些命令</summary>
@@ -131,9 +142,13 @@ TailOrbit 自己不连任何外部服务器，能交给 Tailscale 命令行做�
 | 等离线的设备上线 | 有排着的文件时每 15 秒看一次 `tailscale file cp --targets`，对方在线了照常用 `tailscale file cp` 发 |
 | 分享 | `tailscale serve`、`tailscale funnel`；文件由 TailOrbit 在 `127.0.0.1` 上开的小服务提供，Tailscale 只负责转发 |
 | 网络检测、流量 | `tailscale netcheck`、`tailscale metrics print` |
+| 流量和延迟记录 | TailOrbit 开着时每分钟读一次 `tailscale status --json`，正在通信的设备再 `tailscale ping` 一次，按天记在 `%LOCALAPPDATA%\TailOrbit\net\` 里；只往后加，不删也不上传 |
+| DNS 检查 | `tailscale get` 看本机用不用 Tailscale 的 DNS，`tailscale status --json` 看 MagicDNS 开没开，再在本机解析一台在线设备的名字 |
+| 哪些端口连得进来 | 在本机读正在监听的端口、对应的程序和 Windows 防火墙规则，挑出从 Tailscale 连得到的；`tailscale serve` 挂着的也列进来 |
+| 管理接口 | 令牌用 Windows 的 DPAPI 加密，存在 `%LOCALAPPDATA%\TailOrbit\admin.key`；连上时用它读一次设备列表和令牌的到期时间，之后只在你点批准、关闭到期、删除或改名时访问 `api.tailscale.com` |
 | 云盘 | `tailscale drive`；别的设备的共享通过 Tailscale 自带的 WebDAV（`100.100.100.100:8080`）读 |
 | 开通云盘 | 用你的令牌读出访问规则，只加两条，写回前确认这期间没人改过，最后把令牌作废 |
-| 出口节点和 Tailscale 开关 | `tailscale get`、`tailscale set` |
+| 出口节点和 Tailscale 开关 | `tailscale get`、`tailscale set`；推荐的出口节点来自 `tailscale exit-node suggest`；共享局域网是 `tailscale set --advertise-routes=<这台电脑所在的网段>`，同时带上现在的出口节点设置，不会顺带改掉它；没连管理接口时改名用 `tailscale set --hostname=` |
 | 在不信任的网络上自动使用出口节点 | 网络变了时读一次 Windows 的网络列表，认出现在连的是哪个网络，信任的网络只记它的编号；开着这个功能时每 30 秒再用 `tailscale status --json` 看一眼。不在信任的网络上就 `tailscale set --exit-node=<你选的设备>`，回到信任的网络再用 `tailscale set --exit-node=` 关掉。只关它自己打开的；你自己改过出口节点，它就不再管 |
 | 剪贴板互通 | `tailscale serve` 把 7443 端口上一个带随机码的地址转给本机的小服务，只放行你自己账号的设备 |
 | 在手机上收听本机声音 | 转发和放行规则同剪贴板互通；有人在听时才用 Windows 的回环录音取系统正在放的声音，原样推给手机，不存盘；iPhone App 开着最粗的定位（3 公里精度）只是为了能在后台一直等着，位置不存、不发 |
@@ -196,7 +211,7 @@ With the companion iPhone app (see **Listening on your phone**) you can skip the
 
 If you'd rather not sync all the time, press `Win+Alt+V` whenever you want to pull the Mac's clipboard onto this PC.
 
-The clipboard only travels between your own devices: only devices signed in to your Tailscale account can read it, nothing goes through Funnel or the internet, and nothing is written to disk. Passwords come along too; between the two computers they stay marked as passwords, so they don't end up in clipboard history.
+The clipboard only travels between your own devices: only devices signed in to your Tailscale account can read it, nothing goes through Funnel or the internet, and nothing is written to disk. Passwords come along too; between the two computers they stay marked as passwords, so they don't end up in clipboard history. Tailscale access tokens are the exception: they're never passed to your Mac or phone.
 
 ### Listening on your phone
 
@@ -206,12 +221,23 @@ The PC keeps playing through its own speakers. The stream is 16-bit stereo, abou
 
 If you'd rather not scan and tap every time, there's a companion iPhone app in `ios/` (you build and install it yourself with a Mac; see **Build it yourself**). Open it once and allow location, and it waits in the background: while the phone is on Wi-Fi and your earbuds are in, whatever the PC plays comes through them automatically, and music already playing on the phone just gets quieter instead of stopping. Eight seconds after the PC goes quiet, it stops and lets go of the earbuds. Take the earbuds out or leave Wi-Fi and it disconnects, so it costs no battery or data. It shares the clipboard with the PC too; see **Clipboard**. If you swipe the app away or restart the phone, open it once more.
 
+### Network
+
+The Network page shows your devices on the left, each marked direct or relayed, with its latency and how fast it's transferring right now. Click a device for its card: the path it's taking, its latency over the last 24 hours (solid while direct, dashed while relayed), and its traffic for each of the last 30 days.
+
+At the top on the right is anything that needs attention: problems Tailscale reports, shares that won't open, this PC's exit node or local network still waiting for approval, keys that expire within two weeks, and devices that have been offline for more than a week. Each one has an **Approve**, **Disable expiry** or **Delete** button right next to it; Delete asks for a second click.
+
+Below that is the network check: UDP, IPv6, NAT type, the nearest relay and so on, plus whether DNS can resolve names on your tailnet and which ports on this PC other devices can connect to (click it to see the programs and ports). Windows Firewall doesn't block connections coming in over Tailscale by default; what keeps devices out is the access rules in your admin console, so this is what other devices can reach whenever those rules let them.
+
+At the bottom is traffic for this session, today, the last 7 days or the last 30 days, split into direct and relayed. TailOrbit records each device's traffic and latency once a minute and keeps the records only on this PC, so **Today** and the longer ranges start from when you install this version. When a device you're using switches to a relay or its latency gets much higher than usual, you get a notification; turn off **Alert me when connections get worse** on the Settings page if you'd rather not.
+
+**Approve**, **Disable expiry** and **Delete** need the Admin API: click **Admin API** on the Settings page, generate an access token in the Tailscale admin console when asked, and click Copy; TailOrbit picks it up and clears your clipboard. The token is stored encrypted on this PC and only sent to Tailscale; when it expires, connect again. To stop, click **Disconnect** and revoke the token on the Keys page of the admin console. You don't have to connect at all: the buttons then turn into **Go to admin console** so you can do it on the web.
+
 ### The other pages
 
 - **Share**: drop a file or folder here to get a link and QR code that only your devices can open. If you need to, make it public on the internet for 15 minutes, an hour or a day; it closes itself when time is up. Anything you already serve with `tailscale serve` or `funnel` shows up here too, and turns red if the program behind it has stopped.
-- **Network**: whether each device is direct or relayed, its latency and how fast it's transferring right now, plus a network check and anything that needs fixing.
 - **Drive**: Tailscale's Taildrive. If it isn't set up yet, click **Enable Drive**, generate an access token in the Tailscale admin console when asked, and click Copy. TailOrbit adds the two entries Taildrive needs to your access rules and revokes the token right away. If you'd rather not hand over a token, choose **Edit access controls manually**; the text to paste is already copied for you. Once it's on, drop a folder in to share it with your other devices, and open the folders they share.
-- **Settings**: on the left, this computer's name, addresses, account and Tailscale version on Tailscale; when a newer Tailscale is out, **Update Tailscale to …** appears below, and one click plus a Yes in the administrator prompt installs it; on the right, from top to bottom, the exit node, common Tailscale switches, light, dark or follow Windows, **Start with Windows** and the interface language, the two clipboard switches, listening on your phone, and checking for updates. Set the exit node to **Use automatically on untrusted networks** and TailOrbit switches to the device you picked whenever you join a network like a café's or an airport's; mark your home and work networks as trusted and it turns the exit node off again when you're back on them.
+- **Settings**: on the left, this computer's name, addresses, account and Tailscale version on Tailscale. Click the name to rename this PC; if it was renamed in the admin console before, that only works with the Admin API connected. If the shared clipboard or phone listening is on, the addresses saved on your phone change with the name, so it warns you first and renames on a second Enter. When a newer Tailscale is out, **Update Tailscale to …** appears below, and one click plus a Yes in the administrator prompt installs it. On the right, from top to bottom: the exit node (the one Tailscale recommends is marked **Recommended**), common Tailscale switches and the Admin API from **Network**, light, dark or follow Windows, **Start with Windows**, the interface language and **Alert me when connections get worse**, the two clipboard switches, listening on your phone, and checking for updates. One of the Tailscale switches, **Let other devices access the local network through this PC**, shares the local network this PC is on (your router or printer, say) with your other devices; it needs approving once in the admin console, and TailOrbit does that for you when the Admin API is connected. Set the exit node to **Use automatically on untrusted networks** and TailOrbit switches to the device you picked whenever you join a network like a café's or an airport's; mark your home and work networks as trusted and it turns the exit node off again when you're back on them.
 
 ### Install
 
@@ -227,7 +253,7 @@ To update, click **Check for updates** on the Settings page, then **Update now**
 
 ### Uninstall
 
-In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares, shared clipboard and phone listening it set up in Tailscale are taken down too. Your settings and transfer history are kept unless you turn on **Also delete settings and transfer history**.
+In **Settings → Apps**, find TailOrbit and click **Uninstall**. The shares, shared clipboard and phone listening it set up in Tailscale are taken down too. Your settings, transfer history and Admin API token are kept unless you turn on **Also delete settings and transfer history**. If you're done with the token, also revoke it on the Keys page of the admin console.
 
 ### Build it yourself
 
@@ -250,9 +276,9 @@ The iPhone app lives in `ios/` and needs a Mac with Xcode and [XcodeGen](https:/
 
 ### Privacy
 
-TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are three exceptions: Drive setup uses the token you give it to call Tailscale's admin API once; if you choose to install Tailscale, or to update it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`); and checking for updates contacts GitHub (`api.github.com` and its download servers). **Download updates automatically** is off by default, so unless you turn it on, that only happens when you click **Check for updates**.
+TailOrbit doesn't talk to any outside server; it leaves everything it can to Tailscale's own command line. There are four exceptions: Drive setup uses the token you give it to call Tailscale's admin API once; with the Admin API connected, TailOrbit checks the token once when you connect, and after that calls the same API (`api.tailscale.com`) only when you click **Approve**, **Disable expiry** or **Delete**, or rename this PC; if you choose to install Tailscale, or to update it, the installer is downloaded from the official Tailscale website (`pkgs.tailscale.com`); and checking for updates contacts GitHub (`api.github.com` and its download servers). **Download updates automatically** is off by default, so unless you turn it on, that only happens when you click **Check for updates**.
 
-Your history, the list of files waiting to be sent, shares and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. Clipboard contents and the sound sent to your phone aren't recorded either.
+Your history, the list of files waiting to be sent, shares, the per-minute traffic and latency records, and settings stay in `%LOCALAPPDATA%\TailOrbit\` on this PC and are never uploaded. The Admin API token is kept there too, encrypted by Windows so only your Windows account can read it. Clipboard contents and the sound sent to your phone aren't recorded. Checking which ports other devices can reach only reads the listening ports, their programs and the firewall rules on this PC; it doesn't connect to anything.
 
 <details>
 <summary>What it runs under the hood</summary>
@@ -265,9 +291,13 @@ Your history, the list of files waiting to be sent, shares and settings stay in 
 | Wait for an offline device | while files are waiting, checks `tailscale file cp --targets` every 15 seconds and sends with `tailscale file cp` once the device is online |
 | Share | `tailscale serve`, `tailscale funnel`; files are served by a small TailOrbit server on `127.0.0.1`, and Tailscale only forwards to it |
 | Network check and traffic | `tailscale netcheck`, `tailscale metrics print` |
+| Traffic and latency history | while TailOrbit runs, reads `tailscale status --json` once a minute and runs `tailscale ping` once for each device that's talking, saving one file per day in `%LOCALAPPDATA%\TailOrbit\net\`; it only ever adds to them and never uploads them |
+| DNS check | `tailscale get` to see whether this PC uses Tailscale DNS, `tailscale status --json` for MagicDNS, then resolves an online device's name on this PC |
+| Which ports other devices can reach | reads the listening ports, their programs and the Windows Firewall rules on this PC, and keeps the ones reachable over Tailscale; anything you serve with `tailscale serve` is listed too |
+| Admin API | the token is encrypted with Windows DPAPI and saved in `%LOCALAPPDATA%\TailOrbit\admin.key`; it reads the device list and the token's expiry once when you connect, and after that only calls `api.tailscale.com` when you approve, disable expiry, delete or rename |
 | Drive | `tailscale drive`; other devices' shares are read through Tailscale's built-in WebDAV (`100.100.100.100:8080`) |
 | Drive setup | reads your access rules with the token, adds two entries, checks that nobody changed them in the meantime before writing back, then revokes the token |
-| Exit node and Tailscale switches | `tailscale get`, `tailscale set` |
+| Exit node and Tailscale switches | `tailscale get`, `tailscale set`; the recommended exit node comes from `tailscale exit-node suggest`; sharing the local network runs `tailscale set --advertise-routes=<this PC's subnet>` together with the current exit node setting, so that doesn't get changed along the way; without the Admin API, renaming runs `tailscale set --hostname=` |
 | Use an exit node automatically on untrusted networks | reads the Windows network list when the network changes to tell which network you're on, and keeps only the IDs of trusted networks; while this is on, it also checks `tailscale status --json` every 30 seconds. On an untrusted network it runs `tailscale set --exit-node=<the device you picked>`, and `tailscale set --exit-node=` once you're back on a trusted one. It only turns off an exit node it turned on itself, and leaves things alone once you've changed the exit node yourself |
 | Shared clipboard | `tailscale serve` forwards an address with a random code on port 7443 to the small local server, and only lets in devices on your own account |
 | Listening on your phone | forwarded and limited to your own account the same way as the shared clipboard; only while someone is listening does it use Windows loopback recording to pick up what the PC is playing and pass it straight to the phone, without writing anything to disk; the iPhone app keeps the coarsest location updates (3 km) running only so it can wait in the background, and never stores or sends your location |
