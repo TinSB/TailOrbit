@@ -100,7 +100,7 @@ namespace TailOrbit
         readonly DispatcherTimer clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         Point o;
         double r1 = 150, r2 = 250, r3 = 330, coreSize = 94, dotSize = 78;
-        bool visible, loaded, polling, checking;
+        bool visible, flowing, loaded, polling, checking;
         string checksShown, issuesShown, trafficShown;   // 右边三块上次画的内容：没变就不重建
         int ticks;
         Dictionary<string, object> net;
@@ -229,6 +229,13 @@ namespace TailOrbit
             poll.Start();
             clock.Start();
             foreach (var d in dots.Values) Paint(d);
+            // 连线上的光点等这页滑进来停稳了再流：滑动时整页是当贴图挪的，光点一动整页就得重画
+            Ui.After(500, () =>
+            {
+                if (!visible || flowing) return;
+                flowing = true;
+                foreach (var d in dots.Values) Paint(d);
+            });
             Poll();
             if ((DateTime.Now - netAt).TotalSeconds > 60) Check();
         }
@@ -236,6 +243,7 @@ namespace TailOrbit
         public override void Hidden()
         {
             visible = false;
+            flowing = false;
             poll.Stop();
             clock.Stop();
             foreach (var d in dots.Values) SetFlow(d, 0);
@@ -893,7 +901,7 @@ namespace TailOrbit
             d.Link.StrokeThickness = dir != 0 ? 3 : 1.5;
             d.Link.Stroke = dir != 0 ? lineHot : line;
             d.Link.StrokeDashArray = relay ? new DoubleCollection { 3, 3 } : null;
-            SetFlow(d, visible && on ? dir : 0, rate);
+            SetFlow(d, flowing && on ? dir : 0, rate);
             // 延迟标签：中继的写是哪里的中继，边框是虚线
             if (on && d.Ms >= 0)
             {
@@ -934,7 +942,10 @@ namespace TailOrbit
             // 连线从本机画向设备：虚线往回挪就是光点往本机流（在下载）
             double period = 13 / 3.4;
             int ms = rate > 10 * 1024 * 1024 ? 260 : rate > 1024 * 1024 ? 380 : 520;
-            Ui.Loop(d.Flow, d.Flow, Shape.StrokeDashOffsetProperty, new DoubleAnimation(0, dir == 1 ? period : -period, TimeSpan.FromMilliseconds(ms)) { RepeatBehavior = RepeatBehavior.Forever });
+            // 光点流得慢，每秒 30 帧就顺：不限帧时开着网络页一直每秒画 160 帧、占一个核的四分之一（实测）
+            var flow = new DoubleAnimation(0, dir == 1 ? period : -period, TimeSpan.FromMilliseconds(ms)) { RepeatBehavior = RepeatBehavior.Forever };
+            Timeline.SetDesiredFrameRate(flow, 30);
+            Ui.Loop(d.Flow, d.Flow, Shape.StrokeDashOffsetProperty, flow);
             Ui.AnimTo(d.Flow, OpacityProperty, 0.95, 250);
         }
 
