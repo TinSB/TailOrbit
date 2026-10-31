@@ -113,12 +113,14 @@ namespace TailOrbit
             Height = card.DesiredSize.Height;
         }
 
-        // 备用的一份：先在屏幕外透明地显示一次再收起。新建的透明窗口头两三帧每帧要 20～30ms，
-        // 留到右键时，弹出动画的前一半就被吞掉了（10-27 实测）；备好的这份右键后 30～40ms 就开始动
+        // 备用的一份：先在屏幕外显示一次再收起。新建的透明窗口头两三帧每帧要 20～30ms，
+        // 留到右键时，弹出动画的前一半就被吞掉了（10-27 实测）；备好的这份右键后 30～40ms 就开始动。
+        // 卡片留 1% 不透明：全透明的东西 WPF 根本不画，阴影和字就拖到右键时现做，弹出时最长一帧 30ms，先画好是 16ms（10-31 实测）。
+        // 也不能整张画好：收起再显示时系统先贴出收起前的最后一帧，右键那一下会闪出整张菜单
         public void Prepare()
         {
             Build();
-            card.Opacity = 0;
+            card.Opacity = 0.01;
             Left = Top = -32000;
             EventHandler drawn = null;
             drawn = delegate { ContentRendered -= drawn; if (!opened) Hide(); };
